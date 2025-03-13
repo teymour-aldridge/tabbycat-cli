@@ -330,9 +330,22 @@ fn main() {
 
                 // todo: have a debug mode which logs debug output to a file
 
-                let inst_url = institutions.iter().find(|api_inst| {
-                    Some(api_inst.name.as_str().to_string()) == judge2import.institution
-                });
+                let inst_url = institutions
+                    .iter()
+                    .find(|api_inst| {
+                        Some(api_inst.name.as_str().to_string()) == judge2import.institution
+                            || Some(api_inst.code.as_str().to_string()) == judge2import.institution
+                    })
+                    .map(|inst| inst.url.clone());
+
+                if judge2import.institution.is_some() {
+                    assert!(
+                        inst_url.is_some(),
+                        "error: {:?} {:?}",
+                        judge2import.institution,
+                        institutions
+                    );
+                }
 
                 let resp = attohttpc::post(format!(
                     "{api_addr}/tournaments/{}/adjudicators",
@@ -394,6 +407,10 @@ fn main() {
                             || Some(api_inst.code.as_str().to_string()) == team2import.institution
                     })
                     .map(|t| t.url.clone());
+
+                if team2import.institution.is_some() {
+                    assert!(inst.is_some());
+                }
 
                 let break_category_urls = {
                     let category_and_optionally_url = team2import

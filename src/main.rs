@@ -400,7 +400,7 @@ fn main() {
                                 break_categories
                                     .iter()
                                     .find(|api_cat| {
-                                        api_cat.name.as_str() == team2_import_category_name
+                                        api_cat.slug.as_str() == team2_import_category_name
                                     })
                                     .cloned(),
                             )
@@ -506,7 +506,7 @@ fn main() {
                                     speaker2import_cat,
                                     speaker_categories
                                         .iter()
-                                        .find(|api_cat| api_cat.name.as_str() == speaker2import_cat)
+                                        .find(|api_cat| api_cat.slug.as_str() == speaker2import_cat)
                                         .cloned(),
                                 )
                             })

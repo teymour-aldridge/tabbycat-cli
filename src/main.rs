@@ -111,7 +111,12 @@ mod types {
                 categories: map
                     .get("categories")
                     .cloned()
-                    .map(|t| t.split(',').map(|x| x.to_string()).collect::<Vec<_>>())
+                    .map(|t| {
+                        t.split(',')
+                            .map(|x| x.to_string())
+                            .filter(|t| !t.trim().is_empty())
+                            .collect::<Vec<_>>()
+                    })
                     .unwrap_or(vec![]),
                 email: map.get("email").cloned(),
                 phone: map.get("phone").cloned(),
@@ -247,7 +252,7 @@ fn main() {
     let mut judges: Vec<tabbycat_api::types::Adjudicator> = resp.json().unwrap();
 
     if let Some(mut institutions_csv) = institutions_csv {
-        let headers = dbg!(institutions_csv.headers().unwrap().clone());
+        let headers = institutions_csv.headers().unwrap().clone();
 
         for institution2import in institutions_csv.records() {
             let institution2import = institution2import.unwrap();
@@ -518,7 +523,7 @@ fn main() {
                                 Some(t) => t.clone(),
                                 None => {
                                     let seq = speaker_categories.len() + 1;
-                                    let category: SpeakerCategory = attohttpc::post(format!(
+                                    let resp = attohttpc::post(format!(
                                         "{api_addr}/tournaments/{}/speaker-categories",
                                         args.tournament
                                     ))
@@ -531,9 +536,8 @@ fn main() {
                                     }))
                                     .unwrap()
                                     .send()
-                                    .unwrap()
-                                    .json()
                                     .unwrap();
+                                    let category: SpeakerCategory = resp.json().unwrap();
                                     speaker_categories.push(category.clone());
                                     category
                                 }

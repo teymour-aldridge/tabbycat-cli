@@ -417,7 +417,7 @@ fn main() {
                                     "{api_addr}/tournaments/{}/break-categories",
                                     args.tournament
                                 ))
-                                .header("Authorization", format!("Token {}", args.tournament))
+                                .header("Authorization", format!("Token {}", args.api_key))
                                 .header("content-type", "application/json")
                                 .json(dbg!(&serde_json::json!({
                                     "name": name,

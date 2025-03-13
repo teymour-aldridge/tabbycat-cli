@@ -419,14 +419,14 @@ fn main() {
                                 ))
                                 .header("Authorization", format!("Token {}", args.api_key))
                                 .header("content-type", "application/json")
-                                .json(dbg!(&serde_json::json!({
+                                .json(&serde_json::json!({
                                     "name": name,
                                     "slug": name.to_ascii_lowercase(),
                                     "seq": seq,
                                     "break_size": 4,
                                     "is_general": false,
                                     "priority": 1
-                                })))
+                                }))
                                 .unwrap()
                                 .send()
                                 .unwrap()

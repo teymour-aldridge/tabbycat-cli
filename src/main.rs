@@ -1,6 +1,6 @@
 use clap::Parser;
 use serde_json::{Value, json};
-use tabbycat_api::types::{SpeakerCategory, Team};
+use tabbycat_api::types::{BreakCategory, SpeakerCategory, Team};
 use types::InstitutionRow;
 
 /// Simple program to greet a person
@@ -41,17 +41,35 @@ mod types {
         pub full_name: String,
     }
 
+    fn ret_false() -> bool {
+        false
+    }
+
+    fn tags_deserialize<'de, D>(deserializer: D) -> Result<Vec<String>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let str_sequence = String::deserialize(deserializer)?;
+        Ok(str_sequence
+            .split(',')
+            .map(|item| item.to_owned())
+            .collect())
+    }
+
     // todo: team institution clashes
     #[derive(Deserialize, Debug, Clone)]
     pub struct TeamRow {
         pub full_name: String,
         /// May be supplied: if not we just truncate the full name
         pub short_name: Option<String>,
+        #[serde(deserialize_with = "tags_deserialize")]
+        pub categories: Vec<String>,
         pub code_name: Option<String>,
         pub institution: Option<String>,
-        // pub use_institution_prefix: bool,
         pub seed: Option<u32>,
         pub emoji: Option<String>,
+        #[serde(default = "ret_false")]
+        pub use_institution_prefix: bool,
         #[serde(flatten, deserialize_with = "deserialize_fields_to_vec")]
         pub speakers: Vec<Speaker>,
     }
@@ -169,8 +187,19 @@ fn main() {
 
     let api_addr = format!("{}/api/v1", args.tabbycat_url);
 
-    let mut categories: Vec<tabbycat_api::types::SpeakerCategory> = attohttpc::get(format!(
-        "{api_addr}/tournaments/{}/speaker-categories",
+    let mut speaker_categories: Vec<tabbycat_api::types::SpeakerCategory> =
+        attohttpc::get(format!(
+            "{api_addr}/tournaments/{}/speaker-categories",
+            args.tournament
+        ))
+        .header("Authorization", format!("Token {}", args.api_key))
+        .send()
+        .unwrap()
+        .json()
+        .unwrap();
+
+    let mut break_categories: Vec<tabbycat_api::types::BreakCategory> = attohttpc::get(format!(
+        "{api_addr}/tournaments/{}/break-categories",
         args.tournament
     ))
     .header("Authorization", format!("Token {}", args.api_key))
@@ -357,22 +386,78 @@ fn main() {
                     .iter()
                     .find(|api_inst| {
                         Some(api_inst.name.as_str().to_string()) == team2import.institution
+                            || Some(api_inst.code.as_str().to_string()) == team2import.institution
                     })
                     .map(|t| t.url.clone());
+
+                let break_category_urls = {
+                    let category_and_optionally_url = team2import
+                        .categories
+                        .iter()
+                        .map(|team2_import_category_name| {
+                            (
+                                team2_import_category_name,
+                                break_categories
+                                    .iter()
+                                    .find(|api_cat| {
+                                        api_cat.name.as_str() == team2_import_category_name
+                                    })
+                                    .cloned(),
+                            )
+                        })
+                        .collect::<Vec<_>>();
+
+                    category_and_optionally_url
+                        .into_iter()
+                        .map(|(name, api_category)| match api_category {
+                            Some(t) => t.clone(),
+                            None => {
+                                let seq = break_categories.len() + 1;
+                                let category: BreakCategory = attohttpc::post(format!(
+                                    "{api_addr}/tournaments/{}/break-categories",
+                                    args.tournament
+                                ))
+                                .header("Authorization", format!("Token {}", args.tournament))
+                                .header("content-type", "application/json")
+                                .json(dbg!(&serde_json::json!({
+                                    "name": name,
+                                    "slug": name.to_ascii_lowercase(),
+                                    "seq": seq,
+                                    "break_size": 4,
+                                    "is_general": false,
+                                    "priority": 1
+                                })))
+                                .unwrap()
+                                .send()
+                                .unwrap()
+                                .json()
+                                .unwrap();
+                                break_categories.push(category.clone());
+                                category
+                            }
+                        })
+                        .map(|t| t.url.clone())
+                        .collect::<Vec<_>>()
+                };
 
                 let mut payload = {
                     serde_json::json!({
                         "institution": inst,
                         "reference": team2import.full_name,
-                        "short_reference": team2import.short_name,
                         "seed": team2import.seed,
-                        "emoji": team2import.emoji
+                        "emoji": team2import.emoji,
+                        "use_institution_prefix": team2import.use_institution_prefix,
+                        "break_categories": break_category_urls,
                         // note: we don't add speakers here!
                     })
                 };
 
                 if let Some(code_name) = team2import.code_name {
                     merge(&mut payload, &json!({"code_name": code_name}));
+                }
+
+                if let Some(short_name) = team2import.short_name {
+                    merge(&mut payload, &json!({"short_reference": short_name}));
                 }
 
                 let resp =
@@ -419,7 +504,7 @@ fn main() {
                             .map(|speaker2import_cat| {
                                 (
                                     speaker2import_cat,
-                                    categories
+                                    speaker_categories
                                         .iter()
                                         .find(|api_cat| api_cat.name.as_str() == speaker2import_cat)
                                         .cloned(),
@@ -432,9 +517,10 @@ fn main() {
                             .map(|(name, api_category)| match api_category {
                                 Some(t) => t.clone(),
                                 None => {
-                                    let seq = categories.len() + 1;
+                                    let seq = speaker_categories.len() + 1;
                                     let category: SpeakerCategory = attohttpc::post(format!(
-                                        "{api_addr}/tournaments/_/speaker-categories"
+                                        "{api_addr}/tournaments/{}/speaker-categories",
+                                        args.tournament
                                     ))
                                     .header("Authorization", format!("Token {}", args.tournament))
                                     .header("content-type", "application/json")
@@ -448,7 +534,7 @@ fn main() {
                                     .unwrap()
                                     .json()
                                     .unwrap();
-                                    categories.push(category.clone());
+                                    speaker_categories.push(category.clone());
                                     category
                                 }
                             })

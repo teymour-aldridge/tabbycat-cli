@@ -30,7 +30,10 @@ headers is not important.
   - Headers: `name` (required), `institution` (optional), `institution_clashes`
               (optional, list of institutions that the judge is clashed with,
                in addition to the institution provided in `institution` - do not
-               list twice), `email`
+               list institutions twice), `email` (optional), `is_ca` (optional)
+               - is the person a member of the adjudication core/
+               a chief adjudicator, `is_ia` (optional) - is the person an
+               independent adjudicator
   - Example row: TODO
 
 - `teams.csv`
@@ -38,7 +41,8 @@ headers is not important.
               (optional), `institution` (optional,  either the short name or
               long name of the institution should work), `seed` (optional,
               number if used for Tabbycat seeding), `emoji` (optional, emoji
-              that should be used as the team), and then the speaker attributes
+              that should be used as the team)
+              and then the speaker attributes
               in the form (for the kth speaker) `speakerk_attr`
               (e.g. `speaker1_name`, `speaker2_name1`), see the
               "speaker headers" below for the headers you can add to each

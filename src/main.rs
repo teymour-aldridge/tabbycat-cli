@@ -158,6 +158,10 @@ mod types {
         // todo: add these later
         // pub judge_conflicts: Option<Vec<String>>,
         pub email: Option<String>,
+        #[serde(default = "ret_false")]
+        pub is_ca: bool,
+        #[serde(default = "ret_false")]
+        pub is_ia: bool,
     }
 }
 
@@ -358,7 +362,9 @@ fn main() {
                     "institution_conflicts": judge_inst_conflicts,
                     "email": judge2import.email,
                     "team_conflicts": [],
-                    "adjudicator_conflicts": []
+                    "adjudicator_conflicts": [],
+                    "independent": judge2import.is_ia,
+                    "adj_core": judge2import.is_ca
                 }))
                 .unwrap()
                 .send()

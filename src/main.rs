@@ -62,7 +62,7 @@ mod types {
         pub full_name: String,
         /// May be supplied: if not we just truncate the full name
         pub short_name: Option<String>,
-        #[serde(deserialize_with = "tags_deserialize")]
+        #[serde(deserialize_with = "tags_deserialize", default = "Vec::new")]
         pub categories: Vec<String>,
         pub code_name: Option<String>,
         pub institution: Option<String>,

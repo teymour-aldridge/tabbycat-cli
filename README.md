@@ -3,6 +3,19 @@
 A command-line tool to import data from CSV files to Tabbycat instances (using
 the Tabbycat API).
 
+## Installation
+
+I intend to eventually distribute this software via system package managers,
+however, currently the only way to use this is to install it from source.
+
+The easiest way to do so is to first
+[install Rust](https://www.rust-lang.org/tools/install) and then install this
+software from git
+
+```
+cargo install --git https://git.sr.ht/~teymour/tabbycat-import
+```
+
 ## Usage
 
 Example
@@ -18,8 +31,8 @@ tabbycat-import \
 ```
 
 The format of `institutions.csv`, `teams.csv` and `judges.csv` are quite
-particular. They MUST all have headers (the first row) - the order of the
-headers is not important.
+particular. They should all match the format as documented below. The files in
+the `data` directory of this repository may also be helpful as an example.
 
 - `institutions.csv`
   - Headers: `full_name` (required), `short_code` (required), `region`

@@ -550,7 +550,7 @@ fn main() {
                                         "{api_addr}/tournaments/{}/speaker-categories",
                                         args.tournament
                                     ))
-                                    .header("Authorization", format!("Token {}", args.tournament))
+                                    .header("Authorization", format!("Token {}", args.api_key))
                                     .header("content-type", "application/json")
                                     .json(&serde_json::json!({
                                         "name": name,
@@ -560,6 +560,13 @@ fn main() {
                                     .unwrap()
                                     .send()
                                     .unwrap();
+                                    if !resp.is_success() {
+                                        panic!(
+                                            "Error: request failed, (note: \
+                                             response body is {})",
+                                            resp.text_utf8().unwrap()
+                                        )
+                                    }
                                     let category: SpeakerCategory = resp.json().unwrap();
                                     speaker_categories.push(category.clone());
                                     category

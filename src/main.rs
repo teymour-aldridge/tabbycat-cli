@@ -3,27 +3,32 @@ use serde_json::{Value, json};
 use tabbycat_api::types::{BreakCategory, SpeakerCategory, Team};
 use types::InstitutionRow;
 
-/// Simple program to greet a person
+/// A program to import data into Tabbycat from a spreadsheet.
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
 struct Args {
-    /// Name of the person to greet
+    /// Path of the CSV file containing the institutions.
     #[arg(long)]
     institutions_csv: Option<String>,
 
     #[arg(long)]
+    /// Path of the CSV file containing the judges.
     judges_csv: Option<String>,
 
     #[arg(long)]
+    /// Path of the CSV file containing the teams.
     teams_csv: Option<String>,
 
     #[arg(long)]
+    /// The URL of the Tabbycat instance.
     tabbycat_url: String,
 
     #[arg(long)]
+    /// The tournament slug.
     tournament: String,
 
     #[arg(long)]
+    /// An API key for the Tabbycat instance.
     api_key: String,
 }
 

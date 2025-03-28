@@ -518,7 +518,7 @@ fn main() {
             }
 
             for speaker2import in team2import.speakers {
-                if !speakers
+                if speakers
                     .iter()
                     .find(|speaker| {
                         speaker.name == speaker2import.name
@@ -528,27 +528,21 @@ fn main() {
                                 .map(|key| Some(key.as_str().to_string()) == speaker2import.url_key)
                                 .unwrap_or(false)
                     })
-                    .is_some()
+                    .is_none()
                 {
                     let speaker_category_urls = {
-                        let with_name = speaker2import
-                            .categories
-                            .iter()
-                            .map(|speaker2import_cat| {
-                                (
-                                    speaker2import_cat,
-                                    speaker_categories
-                                        .iter()
-                                        .find(|api_cat| api_cat.slug.as_str() == speaker2import_cat)
-                                        .cloned(),
-                                )
-                            })
-                            .collect::<Vec<_>>();
+                        let mut ret = Vec::new();
+                        for speaker2import_cat in speaker2import.categories {
+                            let category_from_tabbycat = speaker_categories
+                                .iter()
+                                .find(|api_cat| {
+                                    api_cat.slug.as_str().to_ascii_lowercase()
+                                        == speaker2import_cat.to_ascii_lowercase()
+                                })
+                                .cloned();
 
-                        with_name
-                            .into_iter()
-                            .map(|(name, api_category)| match api_category {
-                                Some(t) => t.clone(),
+                            match category_from_tabbycat {
+                                Some(t) => ret.push(t.clone()),
                                 None => {
                                     let seq = speaker_categories.len() + 1;
                                     let resp = attohttpc::post(format!(
@@ -558,8 +552,8 @@ fn main() {
                                     .header("Authorization", format!("Token {}", args.api_key))
                                     .header("content-type", "application/json")
                                     .json(&serde_json::json!({
-                                        "name": name,
-                                        "slug": name,
+                                        "name": speaker2import_cat,
+                                        "slug": speaker2import_cat,
                                         "seq": seq
                                     }))
                                     .unwrap()
@@ -574,11 +568,11 @@ fn main() {
                                     }
                                     let category: SpeakerCategory = resp.json().unwrap();
                                     speaker_categories.push(category.clone());
-                                    category
+                                    ret.push(category);
                                 }
-                            })
-                            .map(|t| t.url.clone())
-                            .collect::<Vec<_>>()
+                            }
+                        }
+                        ret
                     };
 
                     let mut payload = json!({
@@ -587,7 +581,6 @@ fn main() {
                         "categories": speaker_category_urls,
                         "email": speaker2import.email,
                         "anonymous": speaker2import.anonymous,
-
                     });
 
                     if let Some(code_name) = speaker2import.code_name {

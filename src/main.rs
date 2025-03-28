@@ -28,6 +28,16 @@ struct Args {
     tournament: String,
 
     #[arg(long)]
+    /// Whether teams should use be prefixed with the name of their institution
+    /// by default.
+    ///
+    /// Note: if you specify a value in the `use_institutional_prefix` column
+    /// (if this column is supplied) of the teams CSV file, those values will
+    /// take precedence over this flag.
+    #[clap(default_value_t = false)]
+    use_institution_prefix: bool,
+
+    #[arg(long)]
     /// An API key for the Tabbycat instance.
     api_key: String,
 }
@@ -73,8 +83,7 @@ mod types {
         pub institution: Option<String>,
         pub seed: Option<u32>,
         pub emoji: Option<String>,
-        #[serde(default = "ret_false")]
-        pub use_institution_prefix: bool,
+        pub use_institution_prefix: Option<bool>,
         #[serde(flatten, deserialize_with = "deserialize_fields_to_vec")]
         pub speakers: Vec<Speaker>,
     }
@@ -479,7 +488,12 @@ fn main() {
                         "reference": team2import.full_name,
                         "seed": team2import.seed,
                         "emoji": team2import.emoji,
-                        "use_institution_prefix": team2import.use_institution_prefix,
+                        "use_institution_prefix":
+                            if let Some(val) = team2import.use_institution_prefix {
+                                val
+                            } else {
+                                args.use_institution_prefix
+                            },
                         "break_categories": break_category_urls,
                         // note: we don't add speakers here!
                     })

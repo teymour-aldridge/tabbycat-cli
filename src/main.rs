@@ -278,13 +278,13 @@ fn main() {
             let institution: InstitutionRow =
                 institution2import.deserialize(Some(&headers)).unwrap();
 
-            if !institutions
+            if institutions
                 .iter()
                 .find(|cmp| {
                     cmp.name.as_str() == institution.full_name
                         || cmp.code.as_str() == institution.short_code
                 })
-                .is_some()
+                .is_none()
             {
                 let inst: tabbycat_api::types::PerTournamentInstitution =
                     attohttpc::post(format!("{api_addr}/institutions"))
@@ -324,10 +324,10 @@ fn main() {
             let judge2import: crate::types::JudgeRow =
                 judge2import.deserialize(Some(&headers)).unwrap();
 
-            if !judges
+            if judges
                 .iter()
                 .find(|judge| judge.name == judge2import.name)
-                .is_some()
+                .is_none()
             {
                 let judge_inst_conflicts = institutions
                     .iter()
@@ -410,7 +410,7 @@ fn main() {
             let team2import: crate::types::TeamRow =
                 team2import.deserialize(Some(&headers)).unwrap();
 
-            if !teams
+            if teams
                 .iter()
                 .find(|team| {
                     team.long_name == team2import.full_name
@@ -418,7 +418,7 @@ fn main() {
                         || team.code_name.clone().map(|t| t.as_str().to_string())
                             == team2import.code_name
                 })
-                .is_some()
+                .is_none()
             {
                 let inst = institutions
                     .iter()

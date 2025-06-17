@@ -1,4 +1,5 @@
 use clap::Parser;
+use log::info;
 use serde_json::{Value, json};
 use tabbycat_api::types::{BreakCategory, SpeakerCategory, Team};
 use types::InstitutionRow;
@@ -188,6 +189,10 @@ mod types {
 }
 
 fn main() {
+    pretty_env_logger::init_custom_env(
+        &std::env::var("LOG").unwrap_or_else(|_| "info".to_string()),
+    );
+
     let args = Args::parse();
 
     let (institutions_csv, teams_csv, judges_csv) = {
@@ -308,21 +313,21 @@ fn main() {
                     panic!("error: {}", response.text_utf8().unwrap());
                 }
                 let inst: tabbycat_api::types::PerTournamentInstitution = response.json().unwrap();
-                println!(
+                info!(
                     "Institution {} added to Tabbycat, id is {}",
                     inst.name.as_str(),
                     inst.id
                 );
                 institutions.push(inst);
             } else {
-                println!(
+                info!(
                     "Institution {} already exists, not inserting",
                     institution.full_name
                 );
             }
         }
     } else {
-        println!("No institutions were provided to import, therefore skipping.")
+        info!("No institutions were provided to import, therefore skipping.")
     }
 
     if let Some(mut judges_csv) = judges_csv {
@@ -397,10 +402,10 @@ fn main() {
                 }
 
                 let judge: tabbycat_api::types::Adjudicator = resp.json().unwrap();
-                println!("Created judge {} with id {}", judge.name, judge.id);
+                info!("Created judge {} with id {}", judge.name, judge.id);
                 judges.push(judge);
             } else {
-                println!(
+                info!(
                     "Judge {} already exists, not inserting (NOTE: this means
                      that data will not be updated if you have changed it: to
                      do that you must delete the judge on the Tabbycat instance
@@ -545,10 +550,10 @@ fn main() {
                     );
                 }
                 let team: Team = resp.json().unwrap();
-                println!("Created team {} with id {}", team.long_name, team.id);
+                info!("Created team {} with id {}", team.long_name, team.id);
                 teams.push(team.clone());
             } else {
-                println!(
+                info!(
                     "Team {} already exists, not inserting (NOTE: this means
                      that data will not be updated if you have changed it: to
                      do that you must delete the judge on the Tabbycat instance
@@ -684,10 +689,10 @@ fn main() {
                     }
 
                     let speaker: tabbycat_api::types::Speaker = resp.json().unwrap();
-                    println!("Created speaker {} with id {}", speaker.name, speaker.id);
+                    info!("Created speaker {} with id {}", speaker.name, speaker.id);
                     speakers.push(speaker);
                 } else {
-                    println!(
+                    info!(
                         "Speaker {} already exists, not inserting (NOTE: this means
                          that data will not be updated if you have changed it: to
                          do that you must delete the judge on the Tabbycat instance

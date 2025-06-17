@@ -51,7 +51,8 @@ mod types {
     #[derive(Deserialize, Debug, Clone)]
     pub struct InstitutionRow {
         pub region: Option<String>,
-        // list of the rooms to which this institution should be constrained
+        // TODO: warn when this is >20 characters (Tabbycat currently applies
+        // this restriction) to aid with debugging
         pub short_code: String,
         pub full_name: String,
     }
@@ -68,6 +69,7 @@ mod types {
         Ok(str_sequence
             .split(',')
             .map(|item| item.to_owned())
+            .filter(|item| !item.is_empty())
             .collect())
     }
 
@@ -120,29 +122,35 @@ mod types {
         Ok(speaker_buckets
             .into_iter()
             .sorted_by_key(|(t, _)| *t)
-            .map(|(_, map)| Speaker {
-                name: map.get("name").cloned().expect("error: missing name!"),
-                categories: map
-                    .get("categories")
-                    .cloned()
-                    .map(|t| {
-                        t.split(',')
-                            .map(|x| x.to_string())
-                            .filter(|t| !t.trim().is_empty())
-                            .collect::<Vec<_>>()
+            .filter_map(|(_, map)| {
+                if map.values().all(|key| key.trim().is_empty()) {
+                    None
+                } else {
+                    Some(Speaker {
+                        name: map.get("name").cloned().expect("error: missing name!"),
+                        categories: map
+                            .get("categories")
+                            .cloned()
+                            .map(|t| {
+                                t.split(',')
+                                    .map(|x| x.to_string())
+                                    .filter(|t| !t.trim().is_empty())
+                                    .collect::<Vec<_>>()
+                            })
+                            .unwrap_or(vec![]),
+                        email: map.get("email").cloned(),
+                        phone: map.get("phone").cloned(),
+                        anonymous: map
+                            .get("anonymous")
+                            .cloned()
+                            .map(|t| t.to_ascii_lowercase() == "true")
+                            .unwrap_or(false),
+                        code_name: map.get("code_name").cloned(),
+                        url_key: map.get("url_key").cloned(),
+                        gender: map.get("gender").cloned(),
+                        pronoun: map.get("pronoun").cloned(),
                     })
-                    .unwrap_or(vec![]),
-                email: map.get("email").cloned(),
-                phone: map.get("phone").cloned(),
-                anonymous: map
-                    .get("anonymous")
-                    .cloned()
-                    .map(|t| t.to_ascii_lowercase() == "true")
-                    .unwrap_or(false),
-                code_name: map.get("code_name").cloned(),
-                url_key: map.get("url_key").cloned(),
-                gender: map.get("gender").cloned(),
-                pronoun: map.get("pronoun").cloned(),
+                }
             })
             .collect::<Vec<_>>())
     }
@@ -286,19 +294,20 @@ fn main() {
                 })
                 .is_none()
             {
-                let inst: tabbycat_api::types::PerTournamentInstitution =
-                    attohttpc::post(format!("{api_addr}/institutions"))
-                        .header("Authorization", format!("Token {}", args.api_key))
-                        .json(&serde_json::json!({
-                            "region": institution.region,
-                            "name": institution.full_name,
-                            "code": institution.short_code
-                        }))
-                        .unwrap()
-                        .send()
-                        .unwrap()
-                        .json()
-                        .unwrap();
+                let response = attohttpc::post(format!("{api_addr}/institutions"))
+                    .header("Authorization", format!("Token {}", args.api_key))
+                    .json(&serde_json::json!({
+                        "region": institution.region,
+                        "name": institution.full_name,
+                        "code": institution.short_code
+                    }))
+                    .unwrap()
+                    .send()
+                    .unwrap();
+                if !response.is_success() {
+                    panic!("error: {}", response.text_utf8().unwrap());
+                }
+                let inst: tabbycat_api::types::PerTournamentInstitution = response.json().unwrap();
                 println!(
                     "Institution {} added to Tabbycat, id is {}",
                     inst.name.as_str(),
@@ -413,10 +422,11 @@ fn main() {
             if teams
                 .iter()
                 .find(|team| {
-                    team.long_name == team2import.full_name
-                        || Some(&team.short_name) == team2import.short_name.as_ref()
+                    team.long_name == team2import.full_name.trim()
+                        || Some(team.short_name.as_str())
+                            == team2import.short_name.as_ref().map(|t| t.trim())
                         || team.code_name.clone().map(|t| t.as_str().to_string())
-                            == team2import.code_name
+                            == team2import.code_name.as_ref().map(|t| t.trim().to_string())
                 })
                 .is_none()
             {
@@ -437,12 +447,13 @@ fn main() {
                         .categories
                         .iter()
                         .map(|team2_import_category_name| {
+                            assert!(!team2_import_category_name.is_empty());
                             (
                                 team2_import_category_name,
                                 break_categories
                                     .iter()
                                     .find(|api_cat| {
-                                        api_cat.slug.as_str() == team2_import_category_name
+                                        api_cat.slug.as_str() == team2_import_category_name.trim()
                                     })
                                     .cloned(),
                             )
@@ -455,7 +466,7 @@ fn main() {
                             Some(t) => t.clone(),
                             None => {
                                 let seq = break_categories.len() + 1;
-                                let category: BreakCategory = attohttpc::post(format!(
+                                let resp = attohttpc::post(format!(
                                     "{api_addr}/tournaments/{}/break-categories",
                                     args.tournament
                                 ))
@@ -471,9 +482,18 @@ fn main() {
                                 }))
                                 .unwrap()
                                 .send()
-                                .unwrap()
-                                .json()
                                 .unwrap();
+
+                                if !resp.is_success() {
+                                    panic!(
+                                        "error when creating category {name}\n
+                                        {:?} {}",
+                                        resp.status(),
+                                        resp.text_utf8().unwrap()
+                                    );
+                                }
+
+                                let category: BreakCategory = resp.json().unwrap();
                                 break_categories.push(category.clone());
                                 category
                             }
@@ -516,7 +536,13 @@ fn main() {
                         .send()
                         .unwrap();
                 if !resp.is_success() {
-                    panic!("error {:?} {}", resp.status(), resp.text_utf8().unwrap());
+                    panic!(
+                        "error (team is {}) {:?} {} \n {:#?}",
+                        team2import.full_name,
+                        resp.status(),
+                        resp.text_utf8().unwrap(),
+                        teams
+                    );
                 }
                 let team: Team = resp.json().unwrap();
                 println!("Created team {} with id {}", team.long_name, team.id);
@@ -547,16 +573,17 @@ fn main() {
                     let speaker_category_urls = {
                         let mut ret = Vec::new();
                         for speaker2import_cat in speaker2import.categories {
+                            let speaker2import_cat = speaker2import_cat.trim();
                             let category_from_tabbycat = speaker_categories
                                 .iter()
                                 .find(|api_cat| {
-                                    api_cat.slug.as_str().to_ascii_lowercase()
+                                    api_cat.slug.as_str().to_ascii_lowercase().trim()
                                         == speaker2import_cat.to_ascii_lowercase()
                                 })
                                 .cloned();
 
                             match category_from_tabbycat {
-                                Some(t) => ret.push(t.clone()),
+                                Some(t) => ret.push(t.clone().url),
                                 None => {
                                     let seq = speaker_categories.len() + 1;
                                     let resp = attohttpc::post(format!(
@@ -576,13 +603,15 @@ fn main() {
                                     if !resp.is_success() {
                                         panic!(
                                             "Error: request failed, (note: \
-                                             response body is {})",
+                                            response body is {}) \n
+                                            category: {speaker2import_cat} \n
+                                            ",
                                             resp.text_utf8().unwrap()
                                         )
                                     }
                                     let category: SpeakerCategory = resp.json().unwrap();
                                     speaker_categories.push(category.clone());
-                                    ret.push(category);
+                                    ret.push(category.url);
                                 }
                             }
                         }
@@ -591,7 +620,11 @@ fn main() {
 
                     let mut payload = json!({
                         "name": speaker2import.name,
-                        "team": teams.iter().find(|team| {team.long_name == team2import.full_name}).map(|t| t.url.clone()).unwrap(),
+                        "team": teams
+                            .iter()
+                            .find(|team| team.long_name == team2import.full_name.trim())
+                            .map(|t| t.url.clone())
+                            .expect(&format!("expected to find matching team for speaker ({}) \n {:#?}", team2import.full_name, teams)),
                         "categories": speaker_category_urls,
                         "email": speaker2import.email,
                         "anonymous": speaker2import.anonymous,
@@ -644,6 +677,8 @@ fn main() {
                     .send()
                     .unwrap();
 
+                    // TODO: we can format the JSON error messages in a more
+                    // human-friendly way
                     if !resp.is_success() {
                         panic!("error {:?} {}", resp.status(), resp.text_utf8().unwrap());
                     }

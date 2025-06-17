@@ -1,5 +1,5 @@
 use clap::Parser;
-use log::info;
+use log::{error, info};
 use serde_json::{Value, json};
 use tabbycat_api::types::{BreakCategory, SpeakerCategory, Team};
 use types::InstitutionRow;
@@ -189,14 +189,20 @@ mod types {
 }
 
 fn main() {
-    pretty_env_logger::init_custom_env(
-        &std::env::var("LOG").unwrap_or_else(|_| "info".to_string()),
-    );
+    if std::env::var("RUST_LOG").is_err() {
+        unsafe {
+            std::env::set_var("RUST_LOG", "info");
+        }
+    }
+
+    pretty_env_logger::init();
+
+    log::info!("Starting");
 
     let args = Args::parse();
 
     let (institutions_csv, teams_csv, judges_csv) = {
-        let inst = if let Some(institutions_csv) = args.institutions_csv {
+        let inst = if let Some(institutions_csv) = &args.institutions_csv {
             let institutions = std::fs::File::open(institutions_csv).unwrap();
             let rdr = csv::Reader::from_reader(institutions);
             Some(rdr)
@@ -444,6 +450,15 @@ fn main() {
                     .map(|t| t.url.clone());
 
                 if team2import.institution.is_some() {
+                    if !inst.is_some() {
+                        error!(
+                            "Team {} belongs to institution {:?}, however, no \
+                            corresponding institution was defined in {}.",
+                            team2import.full_name,
+                            team2import.institution.unwrap(),
+                            args.institutions_csv.as_ref().unwrap()
+                        );
+                    }
                     assert!(inst.is_some());
                 }
 
@@ -554,10 +569,8 @@ fn main() {
                 teams.push(team.clone());
             } else {
                 info!(
-                    "Team {} already exists, not inserting (NOTE: this means
-                     that data will not be updated if you have changed it: to
-                     do that you must delete the judge on the Tabbycat instance
-                     and then run this command again).",
+                    "Team {} already exists, therefore not creating a record \
+                    for this team.",
                     team2import.full_name
                 );
             }
@@ -566,7 +579,7 @@ fn main() {
                 if speakers
                     .iter()
                     .find(|speaker| {
-                        speaker.name == speaker2import.name
+                        speaker.name.trim() == speaker2import.name.trim()
                             || speaker
                                 .url_key
                                 .clone()
@@ -693,10 +706,8 @@ fn main() {
                     speakers.push(speaker);
                 } else {
                     info!(
-                        "Speaker {} already exists, not inserting (NOTE: this means
-                         that data will not be updated if you have changed it: to
-                         do that you must delete the judge on the Tabbycat instance
-                         and then run this command again).",
+                        "Speaker {} already exists, therefore not creating a \
+                        record for this speaker.",
                         speaker2import.name
                     );
                 }

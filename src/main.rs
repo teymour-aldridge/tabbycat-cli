@@ -1,4 +1,5 @@
 use clap::Parser;
+use csv::Trim;
 use log::{error, info};
 use serde_json::{Value, json};
 use tabbycat_api::types::{BreakCategory, SpeakerCategory, Team};
@@ -185,10 +186,15 @@ mod types {
         pub is_ca: bool,
         #[serde(default = "ret_false")]
         pub is_ia: bool,
+        pub base_score: Option<f64>,
     }
 }
 
 fn main() {
+    rustls::crypto::ring::default_provider()
+        .install_default()
+        .expect("Failed to install rustls crypto provider");
+
     if std::env::var("RUST_LOG").is_err() {
         unsafe {
             std::env::set_var("RUST_LOG", "info");
@@ -204,21 +210,25 @@ fn main() {
     let (institutions_csv, teams_csv, judges_csv) = {
         let inst = if let Some(institutions_csv) = &args.institutions_csv {
             let institutions = std::fs::File::open(institutions_csv).unwrap();
-            let rdr = csv::Reader::from_reader(institutions);
+            let rdr = csv::ReaderBuilder::new()
+                .trim(Trim::All)
+                .from_reader(institutions);
             Some(rdr)
         } else {
             None
         };
         let teams = if let Some(teams_csv) = args.teams_csv {
-            let institutions = std::fs::File::open(teams_csv).unwrap();
-            let rdr = csv::Reader::from_reader(institutions);
+            let teams = std::fs::File::open(teams_csv).unwrap();
+            let rdr = csv::ReaderBuilder::new().trim(Trim::All).from_reader(teams);
             Some(rdr)
         } else {
             None
         };
         let judges = if let Some(judges_csv) = args.judges_csv {
-            let institutions = std::fs::File::open(judges_csv).unwrap();
-            let rdr = csv::Reader::from_reader(institutions);
+            let judges = std::fs::File::open(judges_csv).unwrap();
+            let rdr = csv::ReaderBuilder::new()
+                .trim(Trim::All)
+                .from_reader(judges);
             Some(rdr)
         } else {
             None
@@ -385,12 +395,7 @@ fn main() {
                     );
                 }
 
-                let resp = attohttpc::post(format!(
-                    "{api_addr}/tournaments/{}/adjudicators",
-                    args.tournament
-                ))
-                .header("Authorization", format!("Token {}", args.api_key))
-                .json(&serde_json::json!({
+                let mut payload = serde_json::json!({
                     "name": judge2import.name,
                     "institution": inst_url,
                     "institution_conflicts": judge_inst_conflicts,
@@ -398,8 +403,22 @@ fn main() {
                     "team_conflicts": [],
                     "adjudicator_conflicts": [],
                     "independent": judge2import.is_ia,
-                    "adj_core": judge2import.is_ca
-                }))
+                    "adj_core": judge2import.is_ca,
+                });
+
+                if let Some(base_score) = judge2import.base_score {
+                    log::trace!("base score {base_score}");
+                    merge(&mut payload, &json!({"base_score": base_score}));
+                }
+
+                log::trace!("data for request is: {payload:?}");
+
+                let resp = attohttpc::post(format!(
+                    "{api_addr}/tournaments/{}/adjudicators",
+                    args.tournament
+                ))
+                .header("Authorization", format!("Token {}", args.api_key))
+                .json(&payload)
                 .unwrap()
                 .send()
                 .unwrap();
@@ -412,10 +431,8 @@ fn main() {
                 judges.push(judge);
             } else {
                 info!(
-                    "Judge {} already exists, not inserting (NOTE: this means
-                     that data will not be updated if you have changed it: to
-                     do that you must delete the judge on the Tabbycat instance
-                     and then run this command again).",
+                    "Judge {} already exists, therefore not creating a record \
+                    for this judge.",
                     judge2import.name
                 );
             }

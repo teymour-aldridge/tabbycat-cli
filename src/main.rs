@@ -1,3 +1,5 @@
+use std::process::exit;
+
 use clap::Parser;
 use csv::Trim;
 use log::{error, info};
@@ -20,6 +22,9 @@ struct Args {
     #[arg(long)]
     /// Path of the CSV file containing the teams.
     teams_csv: Option<String>,
+
+    #[arg(long)]
+    clashes_csv: Option<String>,
 
     #[arg(long)]
     /// The URL of the Tabbycat instance.
@@ -90,6 +95,12 @@ mod types {
         pub use_institution_prefix: Option<bool>,
         #[serde(flatten, deserialize_with = "deserialize_fields_to_vec")]
         pub speakers: Vec<Speaker>,
+    }
+
+    #[derive(Deserialize, Debug, Clone)]
+    pub struct Clash {
+        pub object_1: String,
+        pub object_2: String,
     }
 
     fn deserialize_fields_to_vec<'de, D>(deserializer: D) -> Result<Vec<Speaker>, D::Error>
@@ -207,35 +218,10 @@ fn main() {
 
     let args = Args::parse();
 
-    let (institutions_csv, teams_csv, judges_csv) = {
-        let inst = if let Some(institutions_csv) = &args.institutions_csv {
-            let institutions = std::fs::File::open(institutions_csv).unwrap();
-            let rdr = csv::ReaderBuilder::new()
-                .trim(Trim::All)
-                .from_reader(institutions);
-            Some(rdr)
-        } else {
-            None
-        };
-        let teams = if let Some(teams_csv) = args.teams_csv {
-            let teams = std::fs::File::open(teams_csv).unwrap();
-            let rdr = csv::ReaderBuilder::new().trim(Trim::All).from_reader(teams);
-            Some(rdr)
-        } else {
-            None
-        };
-        let judges = if let Some(judges_csv) = args.judges_csv {
-            let judges = std::fs::File::open(judges_csv).unwrap();
-            let rdr = csv::ReaderBuilder::new()
-                .trim(Trim::All)
-                .from_reader(judges);
-            Some(rdr)
-        } else {
-            None
-        };
-
-        (inst, teams, judges)
-    };
+    let institutions_csv = open_csv_file(args.institutions_csv.clone());
+    let teams_csv = open_csv_file(args.teams_csv.clone());
+    let judges_csv = open_csv_file(args.judges_csv.clone());
+    let clashes_csv = open_csv_file(args.clashes_csv.clone());
 
     let api_addr = format!("{}/api/v1", args.tabbycat_url);
 
@@ -343,7 +329,7 @@ fn main() {
             }
         }
     } else {
-        info!("No institutions were provided to import, therefore skipping.")
+        info!("No institutions were provided to import.")
     }
 
     if let Some(mut judges_csv) = judges_csv {
@@ -437,6 +423,8 @@ fn main() {
                 );
             }
         }
+    } else {
+        info!("No judges were provided to import.")
     }
 
     if let Some(mut teams_csv) = teams_csv {
@@ -730,7 +718,239 @@ fn main() {
                 }
             }
         }
+    } else {
+        info!("No teams were provided to import.")
     }
+
+    if let Some(mut clashes_csv) = clashes_csv {
+        for clash2import in clashes_csv.records() {
+            let clash2import = clash2import.unwrap();
+            let clash2import: crate::types::Clash = clash2import.deserialize(None).unwrap();
+
+            log::info!(
+                "Now applying clash {} <=> {}",
+                clash2import.object_1,
+                clash2import.object_2
+            );
+
+            pub enum ClashKind {
+                Adj(tabbycat_api::types::Adjudicator),
+                Team(tabbycat_api::types::Team),
+                Inst(tabbycat_api::types::PerTournamentInstitution),
+            }
+
+            fn find_obj(
+                key: &str,
+                teams: &[Team],
+                judges: &[tabbycat_api::types::Adjudicator],
+                institutions: &[tabbycat_api::types::PerTournamentInstitution],
+            ) -> Option<ClashKind> {
+                for inst in institutions {
+                    if inst.name.as_str().to_ascii_lowercase() == key.to_ascii_lowercase()
+                        || inst.code.as_str().to_ascii_lowercase() == key.to_ascii_lowercase()
+                    {
+                        return Some(ClashKind::Inst(inst.clone()));
+                    }
+                }
+
+                for judge in judges {
+                    if judge.name.to_ascii_lowercase() == key.to_ascii_lowercase() {
+                        log::info!("Resolved {key} as judge {} due to name match.", judge.name);
+
+                        return Some(ClashKind::Adj(judge.clone()));
+                    }
+                }
+
+                for team in teams {
+                    if team.long_name.to_ascii_lowercase() == key.to_ascii_lowercase()
+                        || team.short_name.to_ascii_lowercase() == key.to_ascii_lowercase()
+                    {
+                        log::info!(
+                            "Resolved {key} as team {} due to name match.",
+                            team.long_name
+                        );
+                        return Some(ClashKind::Team(team.clone()));
+                    }
+
+                    if team.speakers.iter().any(|speaker| {
+                        speaker.name.to_ascii_lowercase() == key.to_ascii_lowercase()
+                    }) {
+                        log::info!(
+                            "Resolved {key} as team {} as provided key matched \
+                             the speaker name.",
+                            team.long_name
+                        );
+                        return Some(ClashKind::Team(team.clone()));
+                    }
+                }
+
+                None
+            }
+
+            if clash2import.object_1.to_ascii_lowercase()
+                == clash2import.object_2.to_ascii_lowercase()
+            {
+                log::error!(
+                    "You have attempted to clash someone against themself: {} and {}",
+                    clash2import.object_1,
+                    clash2import.object_2
+                );
+            }
+
+            let a =
+                find_obj(&clash2import.object_1, &teams, &judges, &institutions).expect(&format!(
+                    "error: no judge, team name, or speaker found matching {}",
+                    clash2import.object_1
+                ));
+            let b =
+                find_obj(&clash2import.object_2, &teams, &judges, &institutions).expect(&format!(
+                    "error: no judge, team name, or speaker found matching {}",
+                    clash2import.object_2
+                ));
+
+            match (a, b) {
+                (ClashKind::Adj(a), ClashKind::Inst(inst))
+                | (ClashKind::Inst(inst), ClashKind::Adj(a)) => {
+                    if !a.institution_conflicts.contains(&inst.url) {
+                        let mut t = a.team_conflicts;
+                        t.push(inst.url);
+                        let adj: tabbycat_api::types::Adjudicator = attohttpc::patch(a.url)
+                            .header("Authorization", format!("Token {}", args.api_key))
+                            .json(&serde_json::json!({
+                                "institution_conflicts": t
+                            }))
+                            .unwrap()
+                            .send()
+                            .unwrap()
+                            .json()
+                            .unwrap();
+                        let judge = judges
+                            .iter_mut()
+                            .find(|judge| judge.url == adj.url)
+                            .unwrap();
+                        let name = adj.name.clone();
+                        *judge = adj;
+
+                        log::info!("Clashed adj {} against inst {}", name, inst.code.as_str());
+                    } else {
+                        log::info!(
+                            "Adjudicator {} is already clashed against institution {}",
+                            a.name,
+                            inst.name.as_str()
+                        )
+                    }
+                }
+                (ClashKind::Team(t), ClashKind::Inst(inst))
+                | (ClashKind::Inst(inst), ClashKind::Team(t)) => {
+                    if !t.institution_conflicts.contains(&inst.url) {
+                        let mut conflicts = t.institution_conflicts;
+                        conflicts.push(inst.url);
+                        let patched_team: tabbycat_api::types::Team = attohttpc::patch(t.url)
+                            .header("Authorization", format!("Token {}", args.api_key))
+                            .json(&serde_json::json!({
+                                "institution_conflicts": conflicts
+                            }))
+                            .unwrap()
+                            .send()
+                            .unwrap()
+                            .json()
+                            .unwrap();
+                        let original_team = teams
+                            .iter_mut()
+                            .find(|team| team.url == patched_team.url)
+                            .unwrap();
+                        let name = patched_team.short_name.clone();
+                        *original_team = patched_team;
+
+                        log::info!("Clashed team {} against inst {}", name, inst.code.as_str());
+                    } else {
+                        log::info!(
+                            "Team {} is already clashed against institution {}",
+                            t.short_name,
+                            inst.name.as_str()
+                        )
+                    }
+                }
+                (ClashKind::Adj(a), ClashKind::Adj(b)) => {
+                    if !a.adjudicator_conflicts.contains(&b.url) {
+                        let mut t = a.adjudicator_conflicts;
+                        t.push(b.url);
+                        let adj: tabbycat_api::types::Adjudicator = attohttpc::patch(a.url)
+                            .header("Authorization", format!("Token {}", args.api_key))
+                            .json(&serde_json::json!({
+                                "adjudicator_conflicts": t
+                            }))
+                            .unwrap()
+                            .send()
+                            .unwrap()
+                            .json()
+                            .unwrap();
+                        let judge = judges
+                            .iter_mut()
+                            .find(|judge| judge.url == adj.url)
+                            .unwrap();
+                        let name = adj.name.clone();
+                        *judge = adj;
+
+                        log::info!("Clashed adj {} against adj {}", name, b.name);
+                    } else {
+                        log::info!("Adj {} is already clashed against adj {}", a.name, b.name)
+                    }
+                }
+                (ClashKind::Adj(adj), ClashKind::Team(team))
+                | (ClashKind::Team(team), ClashKind::Adj(adj)) => {
+                    if !adj.team_conflicts.contains(&team.url) {
+                        let mut t = adj.team_conflicts;
+                        t.push(team.url);
+                        let adj: tabbycat_api::types::Adjudicator = attohttpc::patch(adj.url)
+                            .header("Authorization", format!("Token {}", args.api_key))
+                            .json(&serde_json::json!({
+                                "team_conflicts": t
+                            }))
+                            .unwrap()
+                            .send()
+                            .unwrap()
+                            .json()
+                            .unwrap();
+                        let judge = judges
+                            .iter_mut()
+                            .find(|judge| judge.url == adj.url)
+                            .unwrap();
+                        let name = adj.name.clone();
+                        *judge = adj;
+                        log::info!("Clashed adj {} against team {}", name, team.short_name);
+                    } else {
+                        log::info!(
+                            "Adj {} is already clashed against team {}",
+                            adj.name,
+                            team.short_name
+                        );
+                    }
+                }
+                (ClashKind::Team(_), ClashKind::Team(_)) => {
+                    log::error!(
+                        "You have tried to add a conflict between two \
+                                 teams, which is not supported!"
+                    );
+                    exit(1)
+                }
+                (ClashKind::Inst(_), ClashKind::Inst(_)) => {
+                    log::error!(
+                        "You have tried to add a conflict between two \
+                         institutions, which is not supported!"
+                    );
+                    exit(1)
+                }
+            }
+        }
+    }
+}
+
+fn open_csv_file(file_path: Option<String>) -> Option<csv::Reader<std::fs::File>> {
+    file_path.map(|path| {
+        let file = std::fs::File::open(path).unwrap();
+        csv::ReaderBuilder::new().trim(Trim::All).from_reader(file)
+    })
 }
 
 fn merge(a: &mut Value, b: &Value) {

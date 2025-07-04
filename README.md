@@ -25,23 +25,23 @@ tabbycat-import \
   --institutions-csv data/institutions.csv \
   --judges-csv data/judges.csv \
   --teams-csv data/teams.csv \
+  --clashes-csv data/clahes.csv \
   --tabbycat-url "https://sometournament.calicotab.com" \
   --tournament thetournament \
   --api-key yourapikey
 ```
 
-The format of `institutions.csv`, `teams.csv` and `judges.csv` is quite
-particular. They should all match the format as documented below. The files in
-the `data` directory of this repository may also be helpful as an example.
+The format of `institutions.csv`, `teams.csv`, `judges.csv` and `clashes.csv`
+is quite particular. They should all match the format as documented below. The
+files in the `data` directory of this repository may also be helpful as an
+example.
 
 - `institutions.csv`
-
   - Headers: `full_name` (required), `short_code` (required), `region`
     (optional)
   - Example row: "Eidgenössische Technische Hochschule Zürich","ETH Zurich","Europe"
 
 - `judges.csv`
-
   - Headers: `name` (required), `institution` (optional), `institution_clashes`
     (optional, list of institutions that the judge is clashed with,
     in addition to the institution provided in `institution` - do not
@@ -75,3 +75,35 @@ the `data` directory of this repository may also be helpful as an example.
     - `speaker1_gender` (optional, one of "M","F","O")
     - `speaker1_pronoun` (optional)
   - Example row: TODO
+
+- `clashes.csv`
+  - Headers: none. Each CSV file should have two columns. Each column should
+    contain the name of an entity which should be clashed. Clashing is a
+    symmetric relation (that is, the order in which clashes are listed doesn't
+    matter).
+  - Example rows.
+    - To clash two people, just enter them on a row, for example:
+      - To clash a speaker from a team against an adjudicator
+
+        ```
+        speaker name,adjudicator name
+        ```
+
+        or
+
+        ```
+        adjudicator name,speaker name
+        ```
+
+      - To clash an adjudicator against another adjudicator
+        ```
+        adjudicator name,other adjudicator name
+        ```
+      - To clash an adjudicator against an institution
+        ```
+        adjudicator_name,institution_name
+        ```
+      - To clash a team against an institution
+        ```
+        institution_name,adjudicator_name
+        ```

@@ -13,7 +13,7 @@ The easiest way to do so is to first
 software from git
 
 ```
-cargo install --git https://git.sr.ht/~teymour/tabbycat-import
+cargo install --git https://github.com/teymour-aldridge/tabbycat-import
 ```
 
 ## Usage
@@ -25,7 +25,7 @@ tabbycat-import \
   --institutions-csv data/institutions.csv \
   --judges-csv data/judges.csv \
   --teams-csv data/teams.csv \
-  --clashes-csv data/clahes.csv \
+  --clashes-csv data/clashes.csv \
   --tabbycat-url "https://sometournament.calicotab.com" \
   --tournament thetournament \
   --api-key yourapikey

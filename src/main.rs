@@ -2,9 +2,9 @@ use std::process::exit;
 
 use clap::Parser;
 use csv::Trim;
-use log::{error, info};
 use serde_json::{Value, json};
 use tabbycat_api::types::{BreakCategory, SpeakerCategory, Team};
+use tracing::{Level, debug, error, info, span};
 use types::InstitutionRow;
 
 /// A program to import data into Tabbycat from a spreadsheet.
@@ -208,13 +208,18 @@ fn main() {
 
     if std::env::var("RUST_LOG").is_err() {
         unsafe {
-            std::env::set_var("RUST_LOG", "info");
+            std::env::set_var("RUST_LOG", "tabbycat_import=debug,none");
         }
     }
 
-    pretty_env_logger::init();
+    tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .with_timer(tracing_subscriber::fmt::time::uptime())
+        .with_target(false)
+        .with_ansi(true)
+        .init();
 
-    log::info!("Starting");
+    info!("Starting");
 
     let args = Args::parse();
 
@@ -286,6 +291,8 @@ fn main() {
 
     if let Some(mut institutions_csv) = institutions_csv {
         let headers = institutions_csv.headers().unwrap().clone();
+        let institutions_span = span!(Level::INFO, "importing institutions");
+        let _institutions_guard = institutions_span.enter();
 
         for institution2import in institutions_csv.records() {
             let institution2import = institution2import.unwrap();
@@ -334,6 +341,8 @@ fn main() {
 
     if let Some(mut judges_csv) = judges_csv {
         let headers = judges_csv.headers().unwrap().clone();
+        let judges_span = span!(Level::INFO, "importing judges");
+        let _judges_guard = judges_span.enter();
 
         for judge2import in judges_csv.records() {
             let judge2import = judge2import.unwrap();
@@ -393,11 +402,11 @@ fn main() {
                 });
 
                 if let Some(base_score) = judge2import.base_score {
-                    log::trace!("base score {base_score}");
+                    tracing::trace!("base score {base_score}");
                     merge(&mut payload, &json!({"base_score": base_score}));
                 }
 
-                log::trace!("data for request is: {payload:?}");
+                tracing::trace!("data for request is: {payload:?}");
 
                 let resp = attohttpc::post(format!(
                     "{api_addr}/tournaments/{}/adjudicators",
@@ -429,6 +438,8 @@ fn main() {
 
     if let Some(mut teams_csv) = teams_csv {
         let headers = teams_csv.headers().unwrap().clone();
+        let teams_span = span!(Level::INFO, "importing teams");
+        let _teams_guard = teams_span.enter();
 
         for team2import in teams_csv.records() {
             let team2import = team2import.unwrap();
@@ -580,6 +591,8 @@ fn main() {
                 );
             }
 
+            let team_span = span!(Level::INFO, "team", team_name = team2import.full_name);
+            let _team_guard = team_span.enter();
             for speaker2import in team2import.speakers {
                 if speakers
                     .iter()
@@ -727,11 +740,13 @@ fn main() {
             let clash2import = clash2import.unwrap();
             let clash2import: crate::types::Clash = clash2import.deserialize(None).unwrap();
 
-            log::info!(
-                "Now applying clash {} <=> {}",
-                clash2import.object_1,
-                clash2import.object_2
+            let adding_clash_span = span!(
+                Level::INFO,
+                "clash",
+                a = clash2import.object_1,
+                b = clash2import.object_2
             );
+            let _adding_clash_guard = adding_clash_span.enter();
 
             pub enum ClashKind {
                 Adj(tabbycat_api::types::Adjudicator),
@@ -755,7 +770,7 @@ fn main() {
 
                 for judge in judges {
                     if judge.name.to_ascii_lowercase() == key.to_ascii_lowercase() {
-                        log::info!("Resolved {key} as judge {} due to name match.", judge.name);
+                        debug!("Resolved {key} as judge {} due to name match.", judge.name);
 
                         return Some(ClashKind::Adj(judge.clone()));
                     }
@@ -765,7 +780,7 @@ fn main() {
                     if team.long_name.to_ascii_lowercase() == key.to_ascii_lowercase()
                         || team.short_name.to_ascii_lowercase() == key.to_ascii_lowercase()
                     {
-                        log::info!(
+                        debug!(
                             "Resolved {key} as team {} due to name match.",
                             team.long_name
                         );
@@ -775,7 +790,7 @@ fn main() {
                     if team.speakers.iter().any(|speaker| {
                         speaker.name.to_ascii_lowercase() == key.to_ascii_lowercase()
                     }) {
-                        log::info!(
+                        debug!(
                             "Resolved {key} as team {} as provided key matched \
                              the speaker name.",
                             team.long_name
@@ -790,10 +805,9 @@ fn main() {
             if clash2import.object_1.to_ascii_lowercase()
                 == clash2import.object_2.to_ascii_lowercase()
             {
-                log::error!(
+                error!(
                     "You have attempted to clash someone against themself: {} and {}",
-                    clash2import.object_1,
-                    clash2import.object_2
+                    clash2import.object_1, clash2import.object_2
                 );
             }
 
@@ -831,9 +845,9 @@ fn main() {
                         let name = adj.name.clone();
                         *judge = adj;
 
-                        log::info!("Clashed adj {} against inst {}", name, inst.code.as_str());
+                        info!("Clashed adj {} against inst {}", name, inst.code.as_str());
                     } else {
-                        log::info!(
+                        info!(
                             "Adjudicator {} is already clashed against institution {}",
                             a.name,
                             inst.name.as_str()
@@ -862,9 +876,9 @@ fn main() {
                         let name = patched_team.short_name.clone();
                         *original_team = patched_team;
 
-                        log::info!("Clashed team {} against inst {}", name, inst.code.as_str());
+                        info!("Clashed team {} against inst {}", name, inst.code.as_str());
                     } else {
-                        log::info!(
+                        info!(
                             "Team {} is already clashed against institution {}",
                             t.short_name,
                             inst.name.as_str()
@@ -892,9 +906,9 @@ fn main() {
                         let name = adj.name.clone();
                         *judge = adj;
 
-                        log::info!("Clashed adj {} against adj {}", name, b.name);
+                        info!("Clashed adj {} against adj {}", name, b.name);
                     } else {
-                        log::info!("Adj {} is already clashed against adj {}", a.name, b.name)
+                        info!("Adj {} is already clashed against adj {}", a.name, b.name)
                     }
                 }
                 (ClashKind::Adj(adj), ClashKind::Team(team))
@@ -918,24 +932,23 @@ fn main() {
                             .unwrap();
                         let name = adj.name.clone();
                         *judge = adj;
-                        log::info!("Clashed adj {} against team {}", name, team.short_name);
+                        info!("Clashed adj {} against team {}", name, team.short_name);
                     } else {
-                        log::info!(
+                        info!(
                             "Adj {} is already clashed against team {}",
-                            adj.name,
-                            team.short_name
+                            adj.name, team.short_name
                         );
                     }
                 }
                 (ClashKind::Team(_), ClashKind::Team(_)) => {
-                    log::error!(
+                    error!(
                         "You have tried to add a conflict between two \
                                  teams, which is not supported!"
                     );
                     exit(1)
                 }
                 (ClashKind::Inst(_), ClashKind::Inst(_)) => {
-                    log::error!(
+                    error!(
                         "You have tried to add a conflict between two \
                          institutions, which is not supported!"
                     );

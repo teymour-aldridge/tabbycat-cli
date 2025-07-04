@@ -47,6 +47,12 @@ struct Args {
     #[arg(long)]
     /// An API key for the Tabbycat instance.
     api_key: String,
+
+    #[arg(long)]
+    /// Create "sensible" conflicts (currently, add conflicts between a speaker/
+    /// judge and their own institution).
+    #[clap(default_value_t = false)]
+    make_sensible_conflicts: bool,
 }
 
 mod types {
@@ -954,6 +960,74 @@ fn main() {
                     );
                     exit(1)
                 }
+            }
+        }
+    }
+
+    if args.make_sensible_conflicts {
+        for team in teams.clone() {
+            let adding_team_conflict =
+                span!(Level::INFO, "sensible_conflict", team = team.long_name);
+            let _adding_team_guard = adding_team_conflict.enter();
+
+            if let Some(inst) = team.institution
+                && !team.institution_conflicts.contains(&inst)
+            {
+                let mut conflicts = team.institution_conflicts.clone();
+                conflicts.push(inst);
+                let patched_team: tabbycat_api::types::Team = attohttpc::patch(team.url)
+                    .header("Authorization", format!("Token {}", args.api_key))
+                    .json(&serde_json::json!({
+                        "institution_conflicts": conflicts
+                    }))
+                    .unwrap()
+                    .send()
+                    .unwrap()
+                    .json()
+                    .unwrap();
+                let original_team = teams
+                    .iter_mut()
+                    .find(|team| team.url == patched_team.url)
+                    .unwrap();
+                let name = patched_team.short_name.clone();
+                *original_team = patched_team;
+
+                info!("Clashed team {} against its own institution.", name);
+            }
+        }
+
+        for judge in judges.clone() {
+            let adding_judge_conflict = span!(Level::INFO, "sensible_conflict", judge = judge.name);
+            let _adding_judge_guard = adding_judge_conflict.enter();
+
+            if let Some(inst) = judge.institution
+                && !judge.institution_conflicts.contains(&inst)
+            {
+                let mut t = judge.team_conflicts;
+                t.push(inst);
+                let adj: tabbycat_api::types::Adjudicator = attohttpc::patch(judge.url)
+                    .header("Authorization", format!("Token {}", args.api_key))
+                    .json(&serde_json::json!({
+                        "institution_conflicts": t
+                    }))
+                    .unwrap()
+                    .send()
+                    .unwrap()
+                    .json()
+                    .unwrap();
+                let judge = judges
+                    .iter_mut()
+                    .find(|judge| judge.url == adj.url)
+                    .unwrap();
+                let name = adj.name.clone();
+                *judge = adj;
+
+                info!("Clashed adj {} against their own institution", name);
+            } else {
+                info!(
+                    "Adjudicator {} is already clashed against their own institution",
+                    judge.name,
+                )
             }
         }
     }

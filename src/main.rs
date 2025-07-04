@@ -53,6 +53,10 @@ struct Args {
     /// judge and their own institution).
     #[clap(default_value_t = false)]
     make_sensible_conflicts: bool,
+
+    #[arg(long)]
+    #[clap(default_value_t = false)]
+    clear_room_urls: bool,
 }
 
 mod types {
@@ -277,6 +281,14 @@ fn main() {
 
     let mut teams: Vec<tabbycat_api::types::Team> =
         attohttpc::get(format!("{api_addr}/tournaments/{}/teams", args.tournament))
+            .header("Authorization", format!("Token {}", args.api_key))
+            .send()
+            .unwrap()
+            .json()
+            .unwrap();
+
+    let mut rooms: Vec<tabbycat_api::types::Venue> =
+        attohttpc::get(format!("{api_addr}/tournaments/{}/venues", args.tournament))
             .header("Authorization", format!("Token {}", args.api_key))
             .send()
             .unwrap()
@@ -832,18 +844,27 @@ fn main() {
                 (ClashKind::Adj(a), ClashKind::Inst(inst))
                 | (ClashKind::Inst(inst), ClashKind::Adj(a)) => {
                     if !a.institution_conflicts.contains(&inst.url) {
-                        let mut t = a.team_conflicts;
+                        let mut t = a.institution_conflicts;
                         t.push(inst.url);
-                        let adj: tabbycat_api::types::Adjudicator = attohttpc::patch(a.url)
+                        let resp = attohttpc::patch(a.url)
                             .header("Authorization", format!("Token {}", args.api_key))
                             .json(&serde_json::json!({
                                 "institution_conflicts": t
                             }))
                             .unwrap()
                             .send()
-                            .unwrap()
-                            .json()
                             .unwrap();
+
+                        if !resp.is_success() {
+                            error!(
+                                "Failed to patch adjudicator: {} {}",
+                                resp.status(),
+                                resp.text_utf8().unwrap()
+                            );
+                            panic!("Failed to patch adjudicator institution conflicts");
+                        }
+
+                        let adj: tabbycat_api::types::Adjudicator = resp.json().unwrap();
                         let judge = judges
                             .iter_mut()
                             .find(|judge| judge.url == adj.url)
@@ -1029,6 +1050,35 @@ fn main() {
                     judge.name,
                 )
             }
+        }
+    }
+
+    if args.clear_room_urls {
+        for (i, room) in rooms.clone().into_iter().enumerate() {
+            let response = attohttpc::patch(room.url.clone())
+                .header("Authorization", format!("Token {}", args.api_key))
+                .json(&json!({
+                    "external_url": ""
+                }))
+                .unwrap()
+                .send()
+                .unwrap();
+
+            if !response.is_success() {
+                error!(
+                    "Failed to clear room URL for room {}: {} {}",
+                    room.id,
+                    response.status(),
+                    response.text_utf8().unwrap()
+                );
+                panic!("Failed to clear room URL");
+            }
+
+            let room: tabbycat_api::types::Venue = response.json().unwrap();
+
+            tracing::info!("Cleared room {} URL", room.id);
+
+            rooms[i] = room;
         }
     }
 }

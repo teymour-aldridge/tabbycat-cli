@@ -1,4 +1,7 @@
-use std::process::exit;
+use std::{
+    collections::{HashMap, HashSet},
+    process::exit,
+};
 
 use clap::Parser;
 use csv::Trim;
@@ -57,6 +60,9 @@ struct Args {
     #[arg(long)]
     #[clap(default_value_t = false)]
     clear_room_urls: bool,
+
+    #[arg(long)]
+    compute_break_eligibility: Option<String>,
 }
 
 mod types {
@@ -1054,6 +1060,9 @@ fn main() {
     }
 
     if args.clear_room_urls {
+        let span = span!(Level::INFO, "clear_room_urls");
+        let _guard = span.enter();
+
         for (i, room) in rooms.clone().into_iter().enumerate() {
             let response = attohttpc::patch(room.url.clone())
                 .header("Authorization", format!("Token {}", args.api_key))
@@ -1079,6 +1088,113 @@ fn main() {
             tracing::info!("Cleared room {} URL", room.id);
 
             rooms[i] = room;
+        }
+    }
+
+    if let Some(criteria) = args.compute_break_eligibility {
+        let span = span!(Level::INFO, "break_eligibility");
+        let _guard = span.enter();
+
+        let mut map = HashMap::new();
+
+        let open = break_categories
+            .iter()
+            .find(|cat| cat.name.to_ascii_lowercase().contains("open"))
+            .unwrap();
+
+        for break_cat in &break_categories {
+            if break_cat.name.to_ascii_lowercase().contains("open") {
+                continue;
+            }
+            let speaker_cat = speaker_categories
+                .iter()
+                .find(|s| s.name.to_ascii_lowercase() == break_cat.name.to_ascii_lowercase())
+                .expect(&format!(
+                    "no matching category found for {}",
+                    break_cat.name.as_str()
+                ));
+            map.insert(speaker_cat.url.clone(), break_cat.url.clone());
+        }
+
+        let mut team_breaking_counts = HashMap::new();
+
+        for team in &teams {
+            let mut n_breaking_per_category: HashMap<String, usize> = HashMap::new();
+
+            for speaker in &team.speakers {
+                for category in &speaker.categories {
+                    let break_cat = map.get(category).unwrap();
+
+                    n_breaking_per_category
+                        .entry(break_cat.clone())
+                        .and_modify(|count| *count += 1)
+                        .or_insert(1);
+                }
+            }
+
+            team_breaking_counts.insert(team.url.clone(), n_breaking_per_category);
+        }
+
+        let c = criteria.to_ascii_lowercase();
+        if c == "wsdc" {
+            let esl = break_categories
+                .iter()
+                .find(|cat| cat.name.to_ascii_lowercase().contains("esl"))
+                .unwrap();
+            let efl = break_categories
+                .iter()
+                .find(|cat| cat.name.to_ascii_lowercase().contains("efl"))
+                .unwrap();
+
+            for (team_url, breaking_counts) in team_breaking_counts {
+                let team = teams.iter().find(|t| t.url == team_url).unwrap();
+                let mut break_cats = HashSet::new();
+
+                for category in &break_categories {
+                    let count = breaking_counts.get(&category.url).unwrap_or(&0);
+                    if *count >= team.speakers.len().saturating_sub(1) {
+                        break_cats.insert(category.url.clone());
+                    }
+                }
+
+                let breaks_esl = {
+                    breaking_counts.get(&esl.url).unwrap_or(&0)
+                        + breaking_counts.get(&efl.url).unwrap_or(&0)
+                        >= team.speakers.len().saturating_sub(1)
+                };
+
+                if breaks_esl {
+                    break_cats.insert(esl.url.clone());
+                } else {
+                    break_cats.remove(&esl.url.clone());
+                }
+
+                break_cats.insert(open.url.clone());
+
+                attohttpc::patch(&team_url)
+                    .header("Authorization", format!("Token {}", args.api_key))
+                    .json(&json!({
+                        "break_categories": break_cats
+                    }))
+                    .unwrap()
+                    .send()
+                    .unwrap();
+                info!(
+                    "Set team {} break eligibility to {:?}",
+                    team.short_name,
+                    break_cats
+                        .iter()
+                        .map(|cat| {
+                            break_categories
+                                .iter()
+                                .find(|c| &c.url == cat)
+                                .unwrap()
+                                .name
+                                .to_string()
+                        })
+                        .collect::<Vec<_>>()
+                );
+            }
         }
     }
 }

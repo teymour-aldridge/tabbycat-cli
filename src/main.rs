@@ -239,10 +239,10 @@ fn main() {
 
     let args = Args::parse();
 
-    let institutions_csv = open_csv_file(args.institutions_csv.clone());
-    let teams_csv = open_csv_file(args.teams_csv.clone());
-    let judges_csv = open_csv_file(args.judges_csv.clone());
-    let clashes_csv = open_csv_file(args.clashes_csv.clone());
+    let institutions_csv = open_csv_file(args.institutions_csv.clone(), true);
+    let teams_csv = open_csv_file(args.teams_csv.clone(), true);
+    let judges_csv = open_csv_file(args.judges_csv.clone(), true);
+    let clashes_csv = open_csv_file(args.clashes_csv.clone(), false);
 
     let api_addr = format!("{}/api/v1", args.tabbycat_url);
 
@@ -1199,10 +1199,13 @@ fn main() {
     }
 }
 
-fn open_csv_file(file_path: Option<String>) -> Option<csv::Reader<std::fs::File>> {
+fn open_csv_file(file_path: Option<String>, headers: bool) -> Option<csv::Reader<std::fs::File>> {
     file_path.map(|path| {
         let file = std::fs::File::open(path).unwrap();
-        csv::ReaderBuilder::new().trim(Trim::All).from_reader(file)
+        csv::ReaderBuilder::new()
+            .has_headers(headers)
+            .trim(Trim::All)
+            .from_reader(file)
     })
 }
 

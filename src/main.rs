@@ -203,17 +203,16 @@ mod types {
     pub struct JudgeRow {
         pub name: String,
         pub institution: Option<String>,
-        pub institution_clashes: Option<Vec<String>>,
-        // todo: add these later
-        // pub team_conflicts: Option<Vec<String>>,
-        // todo: add these later
-        // pub judge_conflicts: Option<Vec<String>>,
+        #[serde(deserialize_with = "tags_deserialize", default = "Vec::new")]
+        pub institution_clashes: Vec<String>,
         pub email: Option<String>,
         #[serde(default = "ret_false")]
         pub is_ca: bool,
         #[serde(default = "ret_false")]
         pub is_ia: bool,
         pub base_score: Option<f64>,
+        #[serde(deserialize_with = "tags_deserialize", default = "Vec::new")]
+        pub availability: Vec<String>,
     }
 }
 
@@ -242,6 +241,14 @@ fn main() {
     let institutions_csv = open_csv_file(args.institutions_csv.clone(), true);
     let teams_csv = open_csv_file(args.teams_csv.clone(), true);
     let judges_csv = open_csv_file(args.judges_csv.clone(), true);
+    if let Some(mut judges_csv) = open_csv_file(args.judges_csv.clone(), true) {
+        let headers = dbg!(judges_csv.headers().unwrap().clone());
+        for result in judges_csv.records() {
+            let record = dbg!(result.unwrap());
+            let judge_row: crate::types::JudgeRow = record.deserialize(Some(&headers)).unwrap();
+            println!("{:?}", judge_row);
+        }
+    }
     let clashes_csv = open_csv_file(args.clashes_csv.clone(), false);
 
     let api_addr = format!("{}/api/v1", args.tabbycat_url);
@@ -275,15 +282,24 @@ fn main() {
             .json()
             .unwrap();
 
-    let mut speakers: Vec<tabbycat_api::types::Speaker> = attohttpc::get(format!(
+    let resp = attohttpc::get(format!(
         "{api_addr}/tournaments/{}/speakers",
         args.tournament
     ))
     .header("Authorization", format!("Token {}", args.api_key))
     .send()
-    .unwrap()
-    .json()
     .unwrap();
+
+    if !resp.is_success() {
+        error!(
+            "Failed to fetch speakers: status = {:?}, body = {}",
+            resp.status(),
+            resp.text_utf8().unwrap()
+        );
+        panic!("Failed to fetch speakers");
+    }
+
+    let mut speakers: Vec<tabbycat_api::types::Speaker> = resp.json().unwrap();
 
     let mut teams: Vec<tabbycat_api::types::Team> =
         attohttpc::get(format!("{api_addr}/tournaments/{}/teams", args.tournament))
@@ -300,6 +316,15 @@ fn main() {
             .unwrap()
             .json()
             .unwrap();
+
+    let resp = attohttpc::get(format!("{api_addr}/tournaments/{}/rounds", args.tournament))
+        .header("Authorization", format!("Token {}", args.api_key))
+        .send()
+        .unwrap();
+    if !resp.is_success() {
+        panic!("error {:?} {}", resp.status(), resp.text_utf8().unwrap());
+    }
+    let rounds: Vec<tabbycat_api::types::Round> = resp.json().unwrap();
 
     let resp = attohttpc::get(format!(
         "{api_addr}/tournaments/{}/adjudicators",
@@ -383,14 +408,11 @@ fn main() {
                     .filter(|inst_from_api| {
                         judge2import
                             .institution_clashes
-                            .as_ref()
-                            .map(|clashes| {
-                                clashes.iter().any(|inst_judge_clashes| {
-                                    inst_from_api.name.as_str() == inst_judge_clashes
-                                        || inst_from_api.code.as_str() == inst_judge_clashes
-                                })
+                            .iter()
+                            .any(|inst_judge_clashes| {
+                                inst_from_api.name.as_str() == inst_judge_clashes
+                                    || inst_from_api.code.as_str() == inst_judge_clashes
                             })
-                            .unwrap_or(false)
                     })
                     .map(|inst| inst.url.clone())
                     .collect::<Vec<_>>();
@@ -447,7 +469,63 @@ fn main() {
 
                 let judge: tabbycat_api::types::Adjudicator = resp.json().unwrap();
                 info!("Created judge {} with id {}", judge.name, judge.id);
-                judges.push(judge);
+                judges.push(judge.clone());
+
+                let norm = judge2import
+                    .availability
+                    .iter()
+                    .map(|availability| availability.to_ascii_lowercase())
+                    .collect::<HashSet<_>>();
+                for api_round in &rounds {
+                    // check if speaker is available
+                    let (available, method, url) = if norm
+                        .contains(&api_round.abbreviation.to_ascii_lowercase())
+                        || norm.contains(&api_round.name.to_ascii_lowercase())
+                    {
+                        (
+                            "available",
+                            attohttpc::Method::PUT,
+                            format!(
+                                "{api_addr}/tournaments/{}/rounds/{}/availabilities",
+                                args.tournament, api_round.seq
+                            ),
+                        )
+                    } else {
+                        (
+                            "unavailable",
+                            attohttpc::Method::POST,
+                            format!(
+                                "{api_addr}/tournaments/{}/rounds/{}/availabilities",
+                                args.tournament, api_round.seq
+                            ),
+                        )
+                    };
+
+                    // adjust status accordingly
+                    let resp = attohttpc::RequestBuilder::new(method, &url)
+                        .header("Authorization", format!("Token {}", args.api_key))
+                        .json(&json!([judge.url]))
+                        .unwrap()
+                        .send()
+                        .unwrap();
+
+                    if !resp.is_success() {
+                        error!(
+                            "Failed to mark judge {} as {available} for round {}: {} {}",
+                            judge2import.name,
+                            api_round.name.as_str(),
+                            resp.status(),
+                            resp.text_utf8().unwrap()
+                        );
+                        panic!("Failed to mark judge as {available}");
+                    } else {
+                        info!(
+                            "Marked judge {} as {available} for round {}",
+                            judge2import.name,
+                            api_round.name.as_str()
+                        );
+                    }
+                }
             } else {
                 info!(
                     "Judge {} already exists, therefore not creating a record \

@@ -1,0 +1,76 @@
+use std::{fs::File, io::BufReader};
+
+use itertools::Itertools;
+use tabbycat_api::types::RoundPairing;
+use tracing::info;
+
+use crate::{Auth, api_utils::get_rounds};
+
+pub fn save_panels(round: &str, to: &str, api_addr: &str, auth: Auth) {
+    let round = get_round(round, api_addr, auth.clone());
+
+    let pairings = attohttpc::get(&round.links.pairing)
+        .header("Authorization", format!("Token {}", auth.api_key))
+        .send()
+        .unwrap()
+        .json::<Vec<tabbycat_api::types::RoundPairing>>()
+        .unwrap();
+
+    std::fs::write(to, serde_json::to_string(&pairings).unwrap()).unwrap();
+
+    info!("Successfully wrote current draw to `{}`.", to)
+}
+
+pub fn restore_panels(round: &str, to: &str, api_addr: &str, auth: Auth) {
+    let round = get_round(round, api_addr, auth.clone());
+
+    let old_draw: Vec<tabbycat_api::types::RoundPairing> =
+        serde_json::from_reader(BufReader::new(File::open(to).unwrap())).unwrap();
+
+    let live_pairings: Vec<tabbycat_api::types::RoundPairing> =
+        attohttpc::get(&round.links.pairing)
+            .header("Authorization", format!("Token {}", auth.api_key))
+            .send()
+            .unwrap()
+            .json::<Vec<tabbycat_api::types::RoundPairing>>()
+            .unwrap()
+            .into_iter()
+            .sorted_by_key(|k| k.room_rank.unwrap_or(i32::MAX))
+            .collect();
+
+    for (i, room) in old_draw
+        .iter()
+        .sorted_by_key(|r| r.room_rank.unwrap_or(i32::MAX))
+        .enumerate()
+        // If the number of rooms decreases, the panel which was previously
+        // judging the lowest-ranked teams will be dropped (these judges should
+        // then be re-allocated).
+        .take(live_pairings.len())
+    {
+        let corresponding_room = &live_pairings[i];
+
+        attohttpc::post(&corresponding_room.url)
+            .header("Authorization", format!("Token {}", auth.api_key))
+            .json(&RoundPairing {
+                adjudicators: room.adjudicators.clone(),
+                ..corresponding_room.clone()
+            })
+            .unwrap()
+            .send()
+            .unwrap();
+    }
+
+    info!("Restored previous panels.")
+}
+
+fn get_round(round: &str, api_addr: &str, auth: Auth) -> tabbycat_api::types::Round {
+    let rounds = get_rounds(api_addr, &auth.tournament_slug, &auth.api_key);
+    let round = rounds
+        .iter()
+        .find(|r| {
+            r.abbreviation.as_str().to_ascii_lowercase() == round.to_ascii_lowercase()
+                || r.name.as_str().to_ascii_lowercase() == round.to_ascii_lowercase()
+        })
+        .expect("the round you specified does not exist");
+    round.clone()
+}

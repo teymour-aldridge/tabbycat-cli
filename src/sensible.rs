@@ -2,6 +2,9 @@ use tracing::{Level, info, span};
 
 use crate::Auth;
 
+/// Adds conflicts that Tabbycat often fails to create. These can be missing
+/// (for example) if a team's institution is added using the edit database
+/// interface, which will not create the team-institution conflict correctly.
 pub fn do_make_sensible_conflicts(auth: Auth) {
     let resp = attohttpc::get(format!(
         "{}/api/v1/tournaments/{}/teams",

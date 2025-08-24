@@ -5,6 +5,8 @@ use tracing::{Level, error, info, span};
 
 use crate::Auth;
 
+/// Computes whether each team should be break eligible according to the rules
+/// of the specified format.
 pub fn do_compute_break_eligibility(auth: Auth, format: String) {
     let break_categories: Vec<tabbycat_api::types::BreakCategory> = attohttpc::get(format!(
         "{}/api/v1/tournaments/{}/break-categories",

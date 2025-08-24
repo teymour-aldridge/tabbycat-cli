@@ -12,7 +12,11 @@ use serde_json::json;
 use tabbycat_api::types::{BreakCategory, SpeakerCategory, Team};
 use tracing::{Level, debug, error, info, span};
 
-use crate::{Auth, Import, merge, open_csv_file};
+use crate::{
+    Auth, Import,
+    api_utils::{get_rounds, get_teams},
+    merge, open_csv_file,
+};
 
 #[derive(Deserialize, Debug, Clone)]
 pub struct InstitutionRow {
@@ -228,27 +232,9 @@ pub fn do_import(auth: Auth, import: Import) {
 
     let mut speakers: Vec<tabbycat_api::types::Speaker> = resp.json().unwrap();
 
-    let mut teams: Vec<tabbycat_api::types::Team> = attohttpc::get(format!(
-        "{api_addr}/tournaments/{}/teams",
-        auth.tournament_slug
-    ))
-    .header("Authorization", format!("Token {}", auth.api_key))
-    .send()
-    .unwrap()
-    .json()
-    .unwrap();
+    let mut teams = get_teams(&api_addr, &auth.tournament_slug, &auth.api_key);
 
-    let resp = attohttpc::get(format!(
-        "{api_addr}/tournaments/{}/rounds",
-        auth.tournament_slug
-    ))
-    .header("Authorization", format!("Token {}", auth.api_key))
-    .send()
-    .unwrap();
-    if !resp.is_success() {
-        panic!("error {:?} {}", resp.status(), resp.text_utf8().unwrap());
-    }
-    let rounds: Vec<tabbycat_api::types::Round> = resp.json().unwrap();
+    let rounds = get_rounds(&api_addr, &auth.tournament_slug, &auth.api_key);
 
     let resp = attohttpc::get(format!(
         "{api_addr}/tournaments/{}/adjudicators",

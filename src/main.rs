@@ -1,6 +1,8 @@
+pub mod api_utils;
 pub mod break_eligibility;
 pub mod clear_rooms;
 pub mod import;
+pub mod save_panels;
 pub mod sensible;
 
 use std::process::exit;
@@ -12,8 +14,11 @@ use serde_json::Value;
 use tracing::{error, info};
 
 use crate::{
-    break_eligibility::do_compute_break_eligibility, clear_rooms::do_clear_room_urls,
-    import::do_import, sensible::do_make_sensible_conflicts,
+    break_eligibility::do_compute_break_eligibility,
+    clear_rooms::do_clear_room_urls,
+    import::do_import,
+    save_panels::{restore_panels, save_panels},
+    sensible::do_make_sensible_conflicts,
 };
 
 #[derive(Parser, Debug)]
@@ -28,7 +33,7 @@ pub enum Command {
     /// Set the current tournament. After running this, you will be prompted for
     /// the Tabbycat instance's URL, the tournament slug and an API key.
     Set,
-    /// Import teams.
+    /// Import teams from a spreadsheet (CSV file).
     Import(Import),
     /// Create missing conflicts that Tabbycat often doesn't add.
     MakeSensibleConflicts,
@@ -36,7 +41,24 @@ pub enum Command {
     ClearRoomUrls,
     /// Compute break eligibility (currently the only supported format is
     /// "wsdc").
-    ComputeBreakEligibility { format: String },
+    ///
+    /// The available presets are
+    /// - wsdc: this will set a team as eligible to break in a given category,
+    ///         provided that n-1 speakers (where n = number of speakers on a
+    ///         team) are break eligible. The esl category is special-cased,
+    ///         and efl speakers are also counted when determining eligibility
+    ///         in this category.
+    ComputeBreakEligibility {
+        format: String,
+    },
+    SaveAllocs {
+        to: String,
+        round: String,
+    },
+    RestoreAllocs {
+        to: String,
+        round: String,
+    },
 }
 
 #[derive(Debug, Parser, Clone)]
@@ -67,7 +89,7 @@ pub struct Import {
     use_institution_prefix: bool,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone)]
 pub struct Auth {
     tabbycat_url: String,
     tournament_slug: String,
@@ -173,6 +195,14 @@ fn main() {
         Command::ComputeBreakEligibility { format } => {
             let auth = load_credentials();
             do_compute_break_eligibility(auth, format);
+        }
+        Command::SaveAllocs { to, round } => {
+            let auth = load_credentials();
+            save_panels(&round, &to, &auth.tabbycat_url.clone(), auth);
+        }
+        Command::RestoreAllocs { to, round } => {
+            let auth = load_credentials();
+            restore_panels(&round, &to, &auth.tabbycat_url.clone(), auth);
         }
     }
 }

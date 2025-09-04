@@ -184,53 +184,81 @@ pub fn do_import(auth: Auth, import: Import) {
 
     let api_addr = format!("{}/api/v1", auth.tabbycat_url);
 
-    let mut speaker_categories: Vec<tabbycat_api::types::SpeakerCategory> =
-        attohttpc::get(format!(
+    let mut speaker_categories: Vec<tabbycat_api::types::SpeakerCategory> = {
+        let resp = attohttpc::get(format!(
             "{api_addr}/tournaments/{}/speaker-categories",
             auth.tournament_slug
         ))
         .header("Authorization", format!("Token {}", auth.api_key))
         .send()
-        .unwrap()
-        .json()
         .unwrap();
 
-    let mut break_categories: Vec<tabbycat_api::types::BreakCategory> = attohttpc::get(format!(
-        "{api_addr}/tournaments/{}/break-categories",
-        auth.tournament_slug
-    ))
-    .header("Authorization", format!("Token {}", auth.api_key))
-    .send()
-    .unwrap()
-    .json()
-    .unwrap();
+        if !resp.is_success() {
+            panic!("error {:?} {}", resp.status(), resp.text_utf8().unwrap());
+        }
 
-    let mut institutions: Vec<tabbycat_api::types::PerTournamentInstitution> =
-        attohttpc::get(format!("{api_addr}/institutions"))
+        resp.json().unwrap()
+    };
+
+    let mut break_categories: Vec<tabbycat_api::types::BreakCategory> = {
+        let resp = attohttpc::get(format!(
+            "{api_addr}/tournaments/{}/break-categories",
+            auth.tournament_slug
+        ))
+        .header("Authorization", format!("Token {}", auth.api_key))
+        .send()
+        .unwrap();
+
+        if !resp.is_success() {
+            error!(
+                "Failed to fetch break categories: status = {:?}, body = {}",
+                resp.status(),
+                resp.text_utf8().unwrap()
+            );
+            panic!("Failed to fetch break categories");
+        }
+
+        resp.json().unwrap()
+    };
+
+    let mut institutions: Vec<tabbycat_api::types::PerTournamentInstitution> = {
+        let resp = attohttpc::get(format!("{api_addr}/institutions"))
             .header("Authorization", format!("Token {}", auth.api_key))
             .send()
-            .unwrap()
-            .json()
             .unwrap();
 
-    let resp = attohttpc::get(format!(
-        "{api_addr}/tournaments/{}/speakers",
-        auth.tournament_slug
-    ))
-    .header("Authorization", format!("Token {}", auth.api_key))
-    .send()
-    .unwrap();
+        if !resp.is_success() {
+            error!(
+                "Failed to fetch institutions: status = {:?}, body = {}",
+                resp.status(),
+                resp.text_utf8().unwrap()
+            );
+            panic!("Failed to fetch institutions");
+        }
 
-    if !resp.is_success() {
-        error!(
-            "Failed to fetch speakers: status = {:?}, body = {}",
-            resp.status(),
-            resp.text_utf8().unwrap()
-        );
-        panic!("Failed to fetch speakers");
-    }
+        resp.json().unwrap()
+    };
 
-    let mut speakers: Vec<tabbycat_api::types::Speaker> = resp.json().unwrap();
+    let mut speakers: Vec<tabbycat_api::types::Speaker> = {
+        let resp = attohttpc::get(format!(
+            "{api_addr}/tournaments/{}/speakers",
+            auth.tournament_slug
+        ))
+        .header("Authorization", format!("Token {}", auth.api_key))
+        .send()
+        .unwrap();
+
+        if !resp.is_success() {
+            error!(
+                "Failed to fetch speakers: status = {:?}, body = {}",
+                resp.status(),
+                resp.text_utf8().unwrap()
+            );
+            panic!("Failed to fetch speakers");
+        }
+
+        resp.json().unwrap()
+    };
 
     let mut teams = get_teams(&api_addr, &auth.tournament_slug, &auth.api_key);
 

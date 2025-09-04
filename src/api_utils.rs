@@ -1,5 +1,3 @@
-use tabbycat_api::types::Team;
-
 pub fn get_rounds(api_addr: &str, slug: &str, api_key: &str) -> Vec<tabbycat_api::types::Round> {
     let api_addr = format!("{}/api/v1", api_addr);
 

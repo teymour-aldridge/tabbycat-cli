@@ -166,6 +166,10 @@ fn main() {
             io::stdout().flush().unwrap();
             let api_key = read_password().unwrap();
 
+            if api_key.chars().any(char::is_whitespace) {
+                panic!("Your API key should not contain spaces.");
+            }
+
             let auth = Auth {
                 tabbycat_url,
                 tournament_slug: tournament,

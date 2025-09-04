@@ -185,33 +185,43 @@ pub fn do_import(auth: Auth, import: Import) {
     let api_addr = format!("{}/api/v1", auth.tabbycat_url);
 
     let mut speaker_categories: Vec<tabbycat_api::types::SpeakerCategory> = {
-        let resp = attohttpc::get(format!(
+        let base_url = format!(
             "{api_addr}/tournaments/{}/speaker-categories",
             auth.tournament_slug
-        ))
-        .header("Authorization", format!("Token {}", auth.api_key))
-        .send()
-        .unwrap();
+        );
+        let resp = attohttpc::get(&base_url)
+            .header("Authorization", format!("Token {}", auth.api_key))
+            .send()
+            .unwrap();
 
         if !resp.is_success() {
-            panic!("error {:?} {}", resp.status(), resp.text_utf8().unwrap());
+            panic!(
+                "url: {base_url} error {:?}
+                \n \n
+                RESPONSE \n
+                -----------------------------------------------
+                {}",
+                resp.status(),
+                resp.text_utf8().unwrap()
+            );
         }
 
         resp.json().unwrap()
     };
 
     let mut break_categories: Vec<tabbycat_api::types::BreakCategory> = {
-        let resp = attohttpc::get(format!(
+        let resource_loc = format!(
             "{api_addr}/tournaments/{}/break-categories",
             auth.tournament_slug
-        ))
-        .header("Authorization", format!("Token {}", auth.api_key))
-        .send()
-        .unwrap();
+        );
+        let resp = attohttpc::get(&resource_loc)
+            .header("Authorization", format!("Token {}", auth.api_key))
+            .send()
+            .unwrap();
 
         if !resp.is_success() {
             error!(
-                "Failed to fetch break categories: status = {:?}, body = {}",
+                "Failed to fetch break categories: url={resource_loc}, status = {:?}, body = {}",
                 resp.status(),
                 resp.text_utf8().unwrap()
             );

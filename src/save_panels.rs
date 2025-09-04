@@ -6,8 +6,8 @@ use tracing::info;
 
 use crate::{Auth, api_utils::get_rounds};
 
-pub fn save_panels(round: &str, to: &str, api_addr: &str, auth: Auth) {
-    let round = get_round(round, api_addr, auth.clone());
+pub fn save_panels(round: &str, to: &str, auth: Auth) {
+    let round = get_round(round, &auth);
 
     let pairings = attohttpc::get(&round.links.pairing)
         .header("Authorization", format!("Token {}", auth.api_key))
@@ -21,8 +21,8 @@ pub fn save_panels(round: &str, to: &str, api_addr: &str, auth: Auth) {
     info!("Successfully wrote current draw to `{}`.", to)
 }
 
-pub fn restore_panels(round: &str, to: &str, api_addr: &str, auth: Auth) {
-    let round = get_round(round, api_addr, auth.clone());
+pub fn restore_panels(round: &str, to: &str, auth: Auth) {
+    let round = get_round(round, &auth);
 
     let old_draw: Vec<tabbycat_api::types::RoundPairing> =
         serde_json::from_reader(BufReader::new(File::open(to).unwrap())).unwrap();
@@ -63,8 +63,8 @@ pub fn restore_panels(round: &str, to: &str, api_addr: &str, auth: Auth) {
     info!("Restored previous panels.")
 }
 
-fn get_round(round: &str, api_addr: &str, auth: Auth) -> tabbycat_api::types::Round {
-    let rounds = get_rounds(api_addr, &auth.tournament_slug, &auth.api_key);
+fn get_round(round: &str, auth: &Auth) -> tabbycat_api::types::Round {
+    let rounds = get_rounds(auth);
     let round = rounds
         .iter()
         .find(|r| {

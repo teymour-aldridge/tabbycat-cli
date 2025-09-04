@@ -202,11 +202,11 @@ fn main() {
         }
         Command::SaveAllocs { to, round } => {
             let auth = load_credentials();
-            save_panels(&round, &to, &auth.tabbycat_url.clone(), auth);
+            save_panels(&round, &to, auth);
         }
         Command::RestoreAllocs { to, round } => {
             let auth = load_credentials();
-            restore_panels(&round, &to, &auth.tabbycat_url.clone(), auth);
+            restore_panels(&round, &to, auth);
         }
     }
 }

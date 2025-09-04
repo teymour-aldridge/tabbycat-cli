@@ -270,9 +270,9 @@ pub fn do_import(auth: Auth, import: Import) {
         resp.json().unwrap()
     };
 
-    let mut teams = get_teams(&api_addr, &auth.tournament_slug, &auth.api_key);
+    let mut teams = get_teams(&auth);
 
-    let rounds = get_rounds(&api_addr, &auth.tournament_slug, &auth.api_key);
+    let rounds = get_rounds(&auth);
 
     let resp = attohttpc::get(format!(
         "{api_addr}/tournaments/{}/adjudicators",

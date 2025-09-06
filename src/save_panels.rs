@@ -4,17 +4,17 @@ use itertools::Itertools;
 use tabbycat_api::types::RoundPairing;
 use tracing::info;
 
-use crate::{Auth, api_utils::get_rounds};
+use crate::{Auth, api_utils::get_rounds, dispatch_req::json_of_resp};
 
 pub fn save_panels(round: &str, to: &str, auth: Auth) {
     let round = get_round(round, &auth);
 
-    let pairings = attohttpc::get(&round.links.pairing)
-        .header("Authorization", format!("Token {}", auth.api_key))
-        .send()
-        .unwrap()
-        .json::<Vec<tabbycat_api::types::RoundPairing>>()
-        .unwrap();
+    let pairings: Vec<tabbycat_api::types::RoundPairing> = json_of_resp(
+        attohttpc::get(&round.links.pairing)
+            .header("Authorization", format!("Token {}", auth.api_key))
+            .send()
+            .unwrap(),
+    );
 
     std::fs::write(to, serde_json::to_string(&pairings).unwrap()).unwrap();
 

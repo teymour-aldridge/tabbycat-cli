@@ -1,6 +1,7 @@
 pub mod api_utils;
 pub mod break_eligibility;
 pub mod clear_rooms;
+pub mod dispatch_req;
 pub mod import;
 pub mod save_panels;
 pub mod sensible;

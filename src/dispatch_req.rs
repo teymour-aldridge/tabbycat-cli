@@ -8,15 +8,16 @@ pub fn json_of_resp<T: DeserializeOwned>(res: attohttpc::Response) -> T {
         exit(1)
     }
 
-    match res.json() {
+    let text = res.text().unwrap();
+
+    match serde_json::from_str(&text) {
         Ok(t) => t,
         Err(e) => {
             tracing::error!(
                 "Error processing response from Tabbycat API: {e}.
 
                 ------ DATA ------
-                {}",
-                res.text_utf8().unwrap()
+                {text}"
             );
             exit(1)
         }

@@ -21,6 +21,70 @@ pub fn save_panels(round: &str, to: &str, auth: Auth) {
     info!("Successfully wrote current draw to `{}`.", to)
 }
 
+#[cfg(test)]
+#[test]
+fn test_deserialize() {
+    serde_json::from_str::<tabbycat_api::types::DebateTeam>(
+        r#"
+        {
+          "team": "https://tokyoiv2025.calicotab.com/api/v1/tournaments/tokyoiv2025/teams/280811",
+          "side": "og",
+          "flags": []
+        }
+        "#,
+    )
+    .unwrap();
+
+    serde_json::from_str::<Vec<tabbycat_api::types::RoundPairing>>(
+        r#"
+        [
+          {
+            "id": 472224,
+            "url": "https://tokyoiv2025.calicotab.com/api/v1/tournaments/tokyoiv2025/rounds/12/pairings/472224",
+            "venue": "https://tokyoiv2025.calicotab.com/api/v1/tournaments/tokyoiv2025/venues/129947",
+            "teams": [
+              {
+                "team": "https://tokyoiv2025.calicotab.com/api/v1/tournaments/tokyoiv2025/teams/280811",
+                "side": "og",
+                "flags": []
+              },
+              {
+                "team": "https://tokyoiv2025.calicotab.com/api/v1/tournaments/tokyoiv2025/teams/280828",
+                "side": "oo",
+                "flags": []
+              },
+              {
+                "team": "https://tokyoiv2025.calicotab.com/api/v1/tournaments/tokyoiv2025/teams/280964",
+                "side": "cg",
+                "flags": []
+              },
+              {
+                "team": "https://tokyoiv2025.calicotab.com/api/v1/tournaments/tokyoiv2025/teams/280813",
+                "side": "co",
+                "flags": []
+              }
+            ],
+            "adjudicators": {
+              "chair": "https://tokyoiv2025.calicotab.com/api/v1/tournaments/tokyoiv2025/adjudicators/978116",
+              "panellists": [
+                "https://tokyoiv2025.calicotab.com/api/v1/tournaments/tokyoiv2025/adjudicators/978150",
+                "https://tokyoiv2025.calicotab.com/api/v1/tournaments/tokyoiv2025/adjudicators/978127",
+                "https://tokyoiv2025.calicotab.com/api/v1/tournaments/tokyoiv2025/adjudicators/978133",
+                "https://tokyoiv2025.calicotab.com/api/v1/tournaments/tokyoiv2025/adjudicators/978163"
+              ],
+              "trainees": []
+            },
+            "barcode": null,
+            "_links": {
+              "ballots": "https://tokyoiv2025.calicotab.com/api/v1/tournaments/tokyoiv2025/rounds/12/pairings/472224/ballots"
+            },
+            "sides_confirmed": true
+          }
+        ]
+        "#,
+    ).unwrap();
+}
+
 pub fn restore_panels(round: &str, to: &str, auth: Auth) {
     let round = get_round(round, &auth);
 

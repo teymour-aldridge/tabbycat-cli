@@ -1086,7 +1086,7 @@ dependencies = [
  "once_cell",
  "socket2",
  "tracing",
- "windows-sys 0.60.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -1482,7 +1482,7 @@ dependencies = [
 [[package]]
 name = "tabbycat-api"
 version = "0.1.0"
-source = "git+https://git.sr.ht/~teymour/tabbycat-api/?branch=rustls#c0163d4435c8181137ce55e6e944e85cb6f3127e"
+source = "git+https://git.sr.ht/~teymour/tabbycat-api/#9b5810285564d7549ef0368d5d2e1513c52daa25"
 dependencies = [
  "bytes",
  "chrono",

@@ -13,6 +13,7 @@ use csv::Trim;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tracing::{error, info};
+use url::Url;
 
 use crate::{
     break_eligibility::do_compute_break_eligibility,
@@ -149,13 +150,18 @@ fn main() {
             use rpassword::read_password;
             use std::io::{self, Write};
 
-            print!(
-                "Enter Tabbycat URL without trailing slash (e.g. https://wudc2025.calicotab.com): "
-            );
-            io::stdout().flush().unwrap();
-            let mut tabbycat_url = String::new();
-            io::stdin().read_line(&mut tabbycat_url).unwrap();
-            let tabbycat_url = tabbycat_url.trim().to_string();
+            let tabbycat_url = loop {
+                print!("Enter Tabbycat URL (e.g. https://wudc2025.calicotab.com): ");
+                io::stdout().flush().unwrap();
+                let mut tabbycat_url = String::new();
+                io::stdin().read_line(&mut tabbycat_url).unwrap();
+                let tabbycat_url = tabbycat_url.trim().to_string();
+                if let Ok(url) = tabbycat_url.parse::<Url>() {
+                    break url.as_str().trim_end_matches('/').to_string();
+                } else {
+                    error!("Invalid Tabbycat URL provided!");
+                }
+            };
 
             print!("Enter tournament slug: ");
             io::stdout().flush().unwrap();

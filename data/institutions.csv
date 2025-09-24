@@ -1,5 +1,30 @@
-short_code,full_name
-Inst1,Institution 1
-Inst2,Institution 2
-Inst3,Institution 3
-Inst4,Institution 4
+short_code,region,full_name
+Arnor,Eriador,University of Arnor
+Bree,Eriador,University of Bree
+Caras Galadhon,Rhovanion,University of Caras Galadhon
+Dale,Rhovanion,University of Dale
+Dol Amroth,Gondor,University of Dol Amroth
+Dorwinion,Rhovanion,Dorwinion Agricultural College
+Edoras,Rohan,University of Edoras
+Éothéod,Rhovanion,University of Éothéod
+Erebor,Rhovanion,University of Erebor
+Hobbiton,Eriador,University of Hobbiton
+Iron Hills,Rhovanion,University of the Iron Hills
+Isengard,Eriador,University of Isengard
+Ithilien,Gondor,Ithilien College
+Lórien,Rhovanion,University of Lothlórien
+Minas Tirith,Gondor,University of Minas Tirith
+Mithlond,Eriador,University of Mithlond
+Northern Mirkwood,Rhovanion,Northern Mirkwood University
+Pelargir,Gondor,University of Pelargir
+RI Rohan,Rohan,Royal Institute of Rohan
+Rivendell,Eriador,University of Rivendell
+Rohan Military,Rohan,Rohan Military Academy
+Southern Mirkwood,Rhovanion,Southern Mirkwood University
+Staddle,Eriador,Staddle Agricultural College
+The Shire,Eriador,Institute of the Shire
+UG Anfalas,Gondor,"University of Gondor, Anfalas"
+UG Lebennin,Gondor,"University of Gondor, Lebennin"
+UG Lossarnach,Gondor,"University of Gondor, Lossarnach"
+UG Ringló Vale,Gondor,"University of Gondor, Ringló Vale"
+Upbourn,Rohan,Upbourn College

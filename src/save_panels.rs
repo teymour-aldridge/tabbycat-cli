@@ -4,7 +4,7 @@ use itertools::Itertools;
 use tabbycat_api::types::RoundPairing;
 use tracing::info;
 
-use crate::{Auth, api_utils::get_rounds, dispatch_req::json_of_resp};
+use crate::{Auth, api_utils::get_round, dispatch_req::json_of_resp};
 
 pub fn save_panels(round: &str, to: &str, auth: Auth) {
     let round = get_round(round, &auth);
@@ -125,16 +125,4 @@ pub fn restore_panels(round: &str, to: &str, auth: Auth) {
     }
 
     info!("Restored previous panels.")
-}
-
-fn get_round(round: &str, auth: &Auth) -> tabbycat_api::types::Round {
-    let rounds = get_rounds(auth);
-    let round = rounds
-        .iter()
-        .find(|r| {
-            r.abbreviation.as_str().to_ascii_lowercase() == round.to_ascii_lowercase()
-                || r.name.as_str().to_ascii_lowercase() == round.to_ascii_lowercase()
-        })
-        .expect("the round you specified does not exist");
-    round.clone()
 }

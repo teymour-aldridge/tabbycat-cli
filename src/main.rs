@@ -5,6 +5,7 @@ pub mod dispatch_req;
 pub mod import;
 pub mod save_panels;
 pub mod sensible;
+pub mod view_draw;
 
 use std::process::exit;
 
@@ -21,6 +22,7 @@ use crate::{
     import::do_import,
     save_panels::{restore_panels, save_panels},
     sensible::do_make_sensible_conflicts,
+    view_draw::view_draw,
 };
 
 #[derive(Parser, Debug)]
@@ -59,6 +61,9 @@ pub enum Command {
     },
     RestoreAllocs {
         to: String,
+        round: String,
+    },
+    ViewDraw {
         round: String,
     },
 }
@@ -214,6 +219,11 @@ fn main() {
         Command::RestoreAllocs { to, round } => {
             let auth = load_credentials();
             restore_panels(&round, &to, auth);
+        }
+        Command::ViewDraw { round } => {
+            let auth = load_credentials();
+
+            view_draw(&round, auth);
         }
     }
 }

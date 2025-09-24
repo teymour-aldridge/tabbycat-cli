@@ -57,6 +57,10 @@ where
     }
 }
 
+fn not_true() -> bool {
+    false
+}
+
 // todo: team institution clashes
 #[derive(Deserialize, Debug, Clone)]
 pub struct TeamRow {
@@ -69,7 +73,8 @@ pub struct TeamRow {
     pub institution: Option<String>,
     pub seed: Option<u32>,
     pub emoji: Option<String>,
-    pub use_institution_prefix: Option<bool>,
+    #[serde(deserialize_with = "bool_from_str", default = "not_true")]
+    pub use_institution_prefix: bool,
     #[serde(flatten, deserialize_with = "deserialize_fields_to_vec")]
     pub speakers: Vec<Speaker>,
 }
@@ -137,7 +142,18 @@ where
                         .unwrap_or(false),
                     code_name: map.get("code_name").cloned(),
                     url_key: map.get("url_key").cloned(),
-                    gender: map.get("gender").cloned(),
+                    gender: map.get("gender").map(|gender| {
+                        if gender.to_lowercase() == "male" {
+                            "M"
+                        } else if gender.to_lowercase() == "female" {
+                            "F"
+                        } else if gender.to_lowercase() == "other" {
+                            "O"
+                        } else {
+                            gender
+                        }
+                        .to_string()
+                    }),
                     pronoun: map.get("pronoun").cloned(),
                 })
             }
@@ -419,6 +435,8 @@ pub fn do_import(auth: Auth, import: Import) {
                 info!("Created judge {} with id {}", judge.name, judge.id);
                 judges.push(judge.clone());
 
+                // TODO: there should be a way to opt-out of setting this (or
+                // at least specify the default)
                 let norm = judge2import
                     .availability
                     .iter()
@@ -493,26 +511,42 @@ pub fn do_import(auth: Auth, import: Import) {
             let team2import = team2import.unwrap();
             let team2import: TeamRow = team2import.deserialize(Some(&headers)).unwrap();
 
-            if teams
-                .iter()
-                .find(|team| {
-                    team.long_name == team2import.full_name.trim()
-                        || Some(team.short_name.as_str())
-                            == team2import.short_name.as_ref().map(|t| t.trim())
-                        || team.code_name.clone().map(|t| t.as_str().to_string())
-                            == team2import.code_name.as_ref().map(|t| t.trim().to_string())
-                })
-                .is_none()
-            {
-                let inst = institutions
-                    .iter()
-                    .find(|api_inst| {
-                        Some(api_inst.name.as_str().to_lowercase())
-                            == team2import.institution.as_ref().map(|t| t.to_lowercase())
-                            || Some(api_inst.code.as_str().to_lowercase())
-                                == team2import.institution.as_ref().map(|t| t.to_lowercase())
-                    })
-                    .map(|t| t.url.clone());
+            let inst_of_team2_import = institutions.iter().find(|api_inst| {
+                Some(api_inst.name.as_str().to_lowercase())
+                    == team2import.institution.as_ref().map(|t| t.to_lowercase())
+                    || Some(api_inst.code.as_str().to_lowercase())
+                        == team2import.institution.as_ref().map(|t| t.to_lowercase())
+            });
+
+            let team_url = if let Some(team) = teams.iter().find(|team| {
+                let (long_prefix, short_prefix) =
+                    if team2import.use_institution_prefix || import.use_institution_prefix {
+                        if let Some(inst) = inst_of_team2_import {
+                            (
+                                format!("{} ", inst.name.to_string()),
+                                format!("{} ", inst.code.to_string()),
+                            )
+                        } else {
+                            (String::new(), String::new())
+                        }
+                    } else {
+                        (String::new(), String::new())
+                    };
+
+                team.long_name == format!("{long_prefix}{}", team2import.full_name.trim())
+                    || Some(format!("{short_prefix}{}", team.short_name.as_str()).as_str())
+                        == team2import.short_name.as_ref().map(|t| t.trim())
+                    || team.code_name.clone().map(|t| t.as_str().to_string())
+                        == team2import.code_name.as_ref().map(|t| t.trim().to_string())
+            }) {
+                info!(
+                    "Team {} already exists, therefore not creating a record \
+                    for this team.",
+                    team2import.full_name
+                );
+                team.url.clone()
+            } else {
+                let inst = inst_of_team2_import.map(|inst| inst.url.clone());
 
                 if team2import.institution.is_some() {
                     if !inst.is_some() {
@@ -597,11 +631,9 @@ pub fn do_import(auth: Auth, import: Import) {
                         "seed": team2import.seed,
                         "emoji": team2import.emoji,
                         "use_institution_prefix":
-                            if let Some(val) = team2import.use_institution_prefix {
-                                val
-                            } else {
-                                import.use_institution_prefix
-                            },
+                            // TODO: document this behaviour
+                            import.use_institution_prefix
+                            || team2import.use_institution_prefix,
                         "break_categories": break_category_urls,
                         // note: we don't add speakers here!
                     })
@@ -639,14 +671,10 @@ pub fn do_import(auth: Auth, import: Import) {
                     "Created team {} with id {} (institution: {:?})",
                     team.long_name, team.id, inst
                 );
+                let url = team.url.clone();
                 teams.push(team.clone());
-            } else {
-                info!(
-                    "Team {} already exists, therefore not creating a record \
-                    for this team.",
-                    team2import.full_name
-                );
-            }
+                url
+            };
 
             let team_span = span!(Level::INFO, "team", team_name = team2import.full_name);
             let _team_guard = team_span.enter();
@@ -713,11 +741,7 @@ pub fn do_import(auth: Auth, import: Import) {
 
                     let mut payload = json!({
                         "name": speaker2import.name,
-                        "team": teams
-                            .iter()
-                            .find(|team| team.long_name == team2import.full_name.trim())
-                            .map(|t| t.url.clone())
-                            .expect(&format!("expected to find matching team for speaker ({}) \n {:#?}", team2import.full_name, teams)),
+                        "team": team_url,
                         "categories": speaker_category_urls,
                         "email": speaker2import.email,
                         "anonymous": speaker2import.anonymous,

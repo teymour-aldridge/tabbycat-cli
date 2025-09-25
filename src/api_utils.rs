@@ -99,3 +99,21 @@ pub fn pairings_of_round(auth: &Auth, round: &tabbycat_api::types::Round) -> Vec
     );
     pairings
 }
+
+pub fn get_institutions(auth: &Auth) -> Vec<tabbycat_api::types::PerTournamentInstitution> {
+    let resp = attohttpc::get(format!("{}/api/v1/institutions", auth.tabbycat_url))
+        .header("Authorization", format!("Token {}", auth.api_key))
+        .send()
+        .unwrap();
+
+    if !resp.is_success() {
+        tracing::error!(
+            "Failed to fetch institutions: status = {:?}, body = {}",
+            resp.status(),
+            resp.text_utf8().unwrap()
+        );
+        panic!("Failed to fetch institutions");
+    }
+
+    resp.json().unwrap()
+}

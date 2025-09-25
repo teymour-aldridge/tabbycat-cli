@@ -22,8 +22,8 @@ impl Kind {
 
 fn kind(
     a: &str,
-    teams: &Vec<tabbycat_api::types::Team>,
-    judges: &Vec<tabbycat_api::types::Adjudicator>,
+    teams: &[tabbycat_api::types::Team],
+    judges: &[tabbycat_api::types::Adjudicator],
 ) -> Kind {
     if let Some(team) = teams.iter().find(|team| {
         team.long_name.to_lowercase().trim() == a.to_lowercase().trim()

@@ -93,9 +93,9 @@ where
     let speaker_buckets = {
         let mut buckets: HashMap<u8, HashMap<String, String>> = HashMap::new();
         for (key, value) in map.iter() {
-            if key.starts_with("speaker") {
+            if let Some(iter) = key.strip_prefix("speaker") {
                 // todo: good error messages
-                let mut iter = key["speaker".len()..].split('_');
+                let mut iter = iter.split('_');
                 let number = iter.next().unwrap().trim().parse::<u8>().unwrap();
                 let field_name = iter.next().unwrap();
                 buckets
@@ -138,7 +138,7 @@ where
                     anonymous: map
                         .get("anonymous")
                         .cloned()
-                        .map(|t| t.to_ascii_lowercase() == "true")
+                        .map(|t| t.eq_ignore_ascii_case("true"))
                         .unwrap_or(false),
                     code_name: map.get("code_name").cloned(),
                     url_key: map.get("url_key").cloned(),
@@ -313,14 +313,10 @@ pub fn do_import(auth: Auth, import: Import) {
             let institution: InstitutionRow =
                 institution2import.deserialize(Some(&headers)).unwrap();
 
-            if institutions
-                .iter()
-                .find(|cmp| {
-                    cmp.name.as_str() == institution.full_name
-                        || cmp.code.as_str() == institution.short_code
-                })
-                .is_none()
-            {
+            if !institutions.iter().any(|cmp| {
+                cmp.name.as_str() == institution.full_name
+                    || cmp.code.as_str() == institution.short_code
+            }) {
                 let response = attohttpc::post(format!("{api_addr}/institutions"))
                     .header("Authorization", format!("Token {}", auth.api_key))
                     .json(&serde_json::json!({
@@ -361,11 +357,7 @@ pub fn do_import(auth: Auth, import: Import) {
             let judge2import = judge2import.unwrap();
             let judge2import: JudgeRow = judge2import.deserialize(Some(&headers)).unwrap();
 
-            if judges
-                .iter()
-                .find(|judge| judge.name == judge2import.name)
-                .is_none()
-            {
+            if !judges.iter().any(|judge| judge.name == judge2import.name) {
                 let judge_inst_conflicts = institutions
                     .iter()
                     .filter(|inst_from_api| {
@@ -523,8 +515,8 @@ pub fn do_import(auth: Auth, import: Import) {
                     if team2import.use_institution_prefix || import.use_institution_prefix {
                         if let Some(inst) = inst_of_team2_import {
                             (
-                                format!("{} ", inst.name.to_string()),
-                                format!("{} ", inst.code.to_string()),
+                                format!("{} ", inst.name.as_str()),
+                                format!("{} ", inst.code.as_str()),
                             )
                         } else {
                             (String::new(), String::new())
@@ -549,7 +541,7 @@ pub fn do_import(auth: Auth, import: Import) {
                 let inst = inst_of_team2_import.map(|inst| inst.url.clone());
 
                 if team2import.institution.is_some() {
-                    if !inst.is_some() {
+                    if inst.is_none() {
                         error!(
                             "Team {} belongs to institution {:?}, however, no \
                             corresponding institution was defined in {}.",
@@ -572,10 +564,10 @@ pub fn do_import(auth: Auth, import: Import) {
                                 break_categories
                                     .iter()
                                     .find(|api_cat| {
-                                        api_cat.slug.as_str().to_ascii_lowercase()
-                                            == team2_import_category_name
-                                                .trim()
-                                                .to_ascii_lowercase()
+                                        api_cat
+                                            .slug
+                                            .as_str()
+                                            .eq_ignore_ascii_case(team2_import_category_name.trim())
                                     })
                                     .cloned(),
                             )
@@ -679,18 +671,14 @@ pub fn do_import(auth: Auth, import: Import) {
             let team_span = span!(Level::INFO, "team", team_name = team2import.full_name);
             let _team_guard = team_span.enter();
             for speaker2import in team2import.speakers {
-                if speakers
-                    .iter()
-                    .find(|speaker| {
-                        speaker.name.trim() == speaker2import.name.trim()
-                            || speaker
-                                .url_key
-                                .clone()
-                                .map(|key| Some(key.as_str().to_string()) == speaker2import.url_key)
-                                .unwrap_or(false)
-                    })
-                    .is_none()
-                {
+                if !speakers.iter().any(|speaker| {
+                    speaker.name.trim() == speaker2import.name.trim()
+                        || speaker
+                            .url_key
+                            .clone()
+                            .map(|key| Some(key.as_str().to_string()) == speaker2import.url_key)
+                            .unwrap_or(false)
+                }) {
                     let speaker_category_urls = {
                         let mut ret = Vec::new();
                         for speaker2import_cat in speaker2import.categories {
@@ -855,15 +843,15 @@ pub fn do_import(auth: Auth, import: Import) {
                 institutions: &[tabbycat_api::types::PerTournamentInstitution],
             ) -> Option<ClashKind> {
                 for inst in institutions {
-                    if inst.name.as_str().to_ascii_lowercase() == key.to_ascii_lowercase()
-                        || inst.code.as_str().to_ascii_lowercase() == key.to_ascii_lowercase()
+                    if inst.name.as_str().eq_ignore_ascii_case(key)
+                        || inst.code.as_str().eq_ignore_ascii_case(key)
                     {
                         return Some(ClashKind::Inst(inst.clone()));
                     }
                 }
 
                 for judge in judges {
-                    if judge.name.to_ascii_lowercase() == key.to_ascii_lowercase() {
+                    if judge.name.eq_ignore_ascii_case(key) {
                         debug!("Resolved {key} as judge {} due to name match.", judge.name);
 
                         return Some(ClashKind::Adj(judge.clone()));
@@ -871,8 +859,8 @@ pub fn do_import(auth: Auth, import: Import) {
                 }
 
                 for team in teams {
-                    if team.long_name.to_ascii_lowercase() == key.to_ascii_lowercase()
-                        || team.short_name.to_ascii_lowercase() == key.to_ascii_lowercase()
+                    if team.long_name.eq_ignore_ascii_case(key)
+                        || team.short_name.eq_ignore_ascii_case(key)
                     {
                         debug!(
                             "Resolved {key} as team {} due to name match.",
@@ -881,9 +869,11 @@ pub fn do_import(auth: Auth, import: Import) {
                         return Some(ClashKind::Team(team.clone()));
                     }
 
-                    if team.speakers.iter().any(|speaker| {
-                        speaker.name.to_ascii_lowercase() == key.to_ascii_lowercase()
-                    }) {
+                    if team
+                        .speakers
+                        .iter()
+                        .any(|speaker| speaker.name.eq_ignore_ascii_case(key))
+                    {
                         debug!(
                             "Resolved {key} as team {} as provided key matched \
                              the speaker name.",
@@ -896,8 +886,9 @@ pub fn do_import(auth: Auth, import: Import) {
                 None
             }
 
-            if clash2import.object_1.to_ascii_lowercase()
-                == clash2import.object_2.to_ascii_lowercase()
+            if clash2import
+                .object_1
+                .eq_ignore_ascii_case(&clash2import.object_2)
             {
                 error!(
                     "You have attempted to clash someone against themself: {} and {}",
@@ -905,16 +896,20 @@ pub fn do_import(auth: Auth, import: Import) {
                 );
             }
 
-            let a =
-                find_obj(&clash2import.object_1, &teams, &judges, &institutions).expect(&format!(
-                    "error: no judge, team name, or speaker found matching {}",
-                    clash2import.object_1
-                ));
-            let b =
-                find_obj(&clash2import.object_2, &teams, &judges, &institutions).expect(&format!(
-                    "error: no judge, team name, or speaker found matching {}",
-                    clash2import.object_2
-                ));
+            let a = find_obj(&clash2import.object_1, &teams, &judges, &institutions)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "error: no judge, team name, or speaker found matching {}",
+                        clash2import.object_1
+                    )
+                });
+            let b = find_obj(&clash2import.object_2, &teams, &judges, &institutions)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "error: no judge, team name, or speaker found matching {}",
+                        clash2import.object_2
+                    )
+                });
 
             match (a, b) {
                 (ClashKind::Adj(a), ClashKind::Inst(inst))

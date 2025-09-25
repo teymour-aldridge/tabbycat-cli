@@ -9,11 +9,11 @@ pub fn get_rounds(
         api_key,
     }: &Auth,
 ) -> Vec<tabbycat_api::types::Round> {
-    let api_addr = format!("{}/api/v1", tabbycat_url);
+    let api_addr = format!("{tabbycat_url}/api/v1");
 
-    let base_url = format!("{api_addr}/tournaments/{}/rounds", tournament_slug);
+    let base_url = format!("{api_addr}/tournaments/{tournament_slug}/rounds");
     let resp = attohttpc::get(&base_url)
-        .header("Authorization", format!("Token {}", api_key))
+        .header("Authorization", format!("Token {api_key}"))
         .send()
         .unwrap();
     if !resp.is_success() {
@@ -33,11 +33,11 @@ pub fn get_teams(
         api_key,
     }: &Auth,
 ) -> Vec<tabbycat_api::types::Team> {
-    let api_addr = format!("{}/api/v1", tabbycat_url);
+    let api_addr = format!("{tabbycat_url}/api/v1");
 
     let base_url = format!("{api_addr}/tournaments/{tournament_slug}/teams");
     let resp = attohttpc::get(&base_url)
-        .header("Authorization", format!("Token {}", api_key))
+        .header("Authorization", format!("Token {api_key}"))
         .send()
         .unwrap();
 
@@ -59,11 +59,11 @@ pub fn get_judges(
         api_key,
     }: &Auth,
 ) -> Vec<tabbycat_api::types::Adjudicator> {
-    let api_addr = format!("{}/api/v1", tabbycat_url);
+    let api_addr = format!("{tabbycat_url}/api/v1");
 
     let base_url = format!("{api_addr}/tournaments/{tournament_slug}/adjudicators");
     let resp = attohttpc::get(&base_url)
-        .header("Authorization", format!("Token {}", api_key))
+        .header("Authorization", format!("Token {api_key}"))
         .send()
         .unwrap();
 
@@ -83,8 +83,8 @@ pub fn get_round(round: &str, auth: &Auth) -> tabbycat_api::types::Round {
     let round = rounds
         .iter()
         .find(|r| {
-            r.abbreviation.as_str().to_ascii_lowercase() == round.to_ascii_lowercase()
-                || r.name.as_str().to_ascii_lowercase() == round.to_ascii_lowercase()
+            r.abbreviation.as_str().eq_ignore_ascii_case(round)
+                || r.name.as_str().eq_ignore_ascii_case(round)
         })
         .expect("the round you specified does not exist");
     round.clone()

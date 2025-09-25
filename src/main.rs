@@ -49,10 +49,10 @@ pub enum Command {
     ///
     /// The available presets are
     /// - wsdc: this will set a team as eligible to break in a given category,
-    ///         provided that n-1 speakers (where n = number of speakers on a
-    ///         team) are break eligible. The esl category is special-cased,
-    ///         and efl speakers are also counted when determining eligibility
-    ///         in this category.
+    ///   provided that n-1 speakers (where n = number of speakers on a
+    ///   team) are break eligible. The esl category is special-cased,
+    ///   and efl speakers are also counted when determining eligibility
+    ///   in this category.
     ComputeBreakEligibility {
         format: String,
     },

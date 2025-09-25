@@ -21,12 +21,6 @@ fn test_tabbycat_setup() {
         .with_ansi(true)
         .init();
 
-    Command::new("cargo")
-        .args(["install", "--path", "."])
-        .status()
-        .expect("Failed to install package");
-
-    // Clone the repository
     Command::new("git")
         .args([
             "clone",
@@ -36,42 +30,49 @@ fn test_tabbycat_setup() {
         .status()
         .expect("Failed to clone repository");
 
-    // Change to tabbycat directory and run docker-compose up
     env::set_current_dir("tabbycat").expect("Failed to change directory");
-    Command::new("docker-compose")
-        .args(["-f", "docker-compose.yml", "up", "--detach"])
+    Command::new("docker")
+        .args(["compose", "-f", "docker-compose.yml", "up", "--detach"])
         .status()
         .expect("Failed to start docker containers");
 
-    tracing::trace!("Running reset_db");
+    loop {
+        match attohttpc::get("http://localhost:8000").send() {
+            Ok(res) if res.status().is_success() || res.status().is_redirection() => break,
+            _ => (),
+        }
+    }
 
-    Command::new("docker-compose")
-        .args([
-            "run",
-            "web",
-            "python",
-            "tabbycat/manage.py",
-            "reset_db",
-            "--no-input",
-        ])
-        .status()
-        .expect("Failed to reset database");
+    if std::env::var("CI") == Err(std::env::VarError::NotPresent) {
+        Command::new("docker")
+            .args([
+                "compose",
+                "run",
+                "web",
+                "python",
+                "tabbycat/manage.py",
+                "reset_db",
+                "--no-input",
+            ])
+            .status()
+            .expect("Failed to reset database");
 
-    tracing::trace!("Finished reset_db");
+        tracing::trace!("Finished reset_db");
 
-    Command::new("docker-compose")
-        .args([
-            "run",
-            "web",
-            "python",
-            "tabbycat/manage.py",
-            "migrate",
-            "--no-input",
-        ])
-        .status()
-        .expect("Failed to reset database");
+        Command::new("docker")
+            .args([
+                "compose",
+                "run",
+                "web",
+                "python",
+                "tabbycat/manage.py",
+                "migrate",
+                "--no-input",
+            ])
+            .status()
+            .expect("Failed to reset database");
+    }
 
-    // Create superuser
     let mut env_vars = HashMap::new();
     env_vars.insert("DJANGO_SUPERUSER_PASSWORD".to_string(), "test".to_string());
     env_vars.insert(
@@ -80,8 +81,9 @@ fn test_tabbycat_setup() {
     );
     env_vars.insert("DJANGO_SUPERUSER_USERNAME".to_string(), "user".to_string());
 
-    Command::new("docker-compose")
+    Command::new("docker")
         .args([
+            "compose",
             "run",
             "--env",
             &format!(
@@ -107,9 +109,9 @@ fn test_tabbycat_setup() {
         .status()
         .expect("Failed to create superuser");
 
-    // Get auth token
-    let output = Command::new("docker-compose")
+    let output = Command::new("docker")
         .args([
+            "compose",
             "run",
             "web",
             "python",
@@ -150,6 +152,11 @@ fn test_tabbycat_setup() {
         .unwrap();
 
     env::set_current_dir("..").expect("Failed to change back to original directory");
+    Command::new("cargo")
+        .args(["install", "--path", "."])
+        .status()
+        .expect("Failed to install package");
+
     Command::new("tabbycat")
         .args([
             "import",

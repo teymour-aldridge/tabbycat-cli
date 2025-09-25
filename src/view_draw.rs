@@ -9,7 +9,7 @@ use crate::{
     dispatch_req::json_of_resp,
 };
 
-pub fn view_draw(round: &String, auth: Auth) {
+pub fn view_draw(round: &str, auth: Auth) {
     let round = get_round(round, &auth);
 
     let teams_in_debate: tabbycat_api::types::Preference = json_of_resp(
@@ -128,19 +128,19 @@ pub fn view_draw(round: &String, auth: Auth) {
         if let Some(judges) = &pairing.adjudicators {
             let mut prev = false;
             if let Some(chair) = &judges.chair {
-                let judge = (name_of_judge)(&chair);
+                let judge = (name_of_judge)(chair);
                 judge_cell_contents += &format!("{} (c, id {})", judge.name, judge.id);
                 prev = true;
             }
             for panelist in &judges.panellists {
-                let judge = (name_of_judge)(&panelist);
+                let judge = (name_of_judge)(panelist);
                 if prev {
                     judge_cell_contents += "\n----\n";
                 }
                 judge_cell_contents += &format!("{} (id {})", judge.name, judge.id);
             }
             for trainee in &judges.trainees {
-                let judge = (name_of_judge)(&trainee);
+                let judge = (name_of_judge)(trainee);
                 if prev {
                     judge_cell_contents += "\n";
                 }

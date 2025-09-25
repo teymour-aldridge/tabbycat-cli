@@ -15,7 +15,7 @@ pub fn do_make_sensible_conflicts(auth: Auth) {
 
     if let Err(e) = &resp {
         dbg!(e);
-        panic!("Failed to fetch teams: {:?}", e);
+        panic!("Failed to fetch teams: {e:?}");
     }
     let resp = resp.unwrap();
 

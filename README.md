@@ -18,10 +18,14 @@ cargo install --git https://github.com/teymour-aldridge/tabbycat-import
 
 ## Usage
 
+Note: running `tabbycat --help` will print useful information about comamands.
+
+### Importing teams
+
 Example
 
 ```
-tabbycat-import \
+tabbycat import \
   --institutions-csv data/institutions.csv \
   --judges-csv data/judges.csv \
   --teams-csv data/teams.csv \

@@ -5,8 +5,15 @@ the Tabbycat API).
 
 ## Installation
 
-I intend to eventually distribute this software via system package managers,
-however, currently the only way to use this is to install it from source.
+### Using cURL
+
+Run the command
+
+```
+curl https://raw.githubusercontent.com/teymour-aldridge/tabbycat-cli/848ccc3e2e456d1043abca4ae78bdee3c126e435/install.sh | bash
+```
+
+### From source, using a Rust compiler
 
 The easiest way to do so is to first
 [install Rust](https://www.rust-lang.org/tools/install) and then install this

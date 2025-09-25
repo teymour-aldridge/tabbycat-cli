@@ -84,6 +84,10 @@ pub enum Command {
         round: String,
         judge: String,
     },
+    Clash {
+        a: String,
+        b: String,
+    },
 }
 
 #[derive(Debug, Parser, Clone)]
@@ -262,6 +266,10 @@ fn main() {
             let auth = load_credentials();
 
             edit_draw::remove(&round, &judge, auth);
+        }
+        Command::Clash { a, b } => {
+            let auth = load_credentials();
+            import::add_clash_cmd(&a, &b, &auth)
         }
     }
 }

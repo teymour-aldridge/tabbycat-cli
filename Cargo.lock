@@ -1628,7 +1628,7 @@ dependencies = [
 [[package]]
 name = "tabbycat-api"
 version = "0.1.0"
-source = "git+https://git.sr.ht/~teymour/tabbycat-api/#cf0af5bd5eb3e81f1b97e475cacc72253ec1d03e"
+source = "git+https://git.sr.ht/~teymour/tabbycat-api/#f14147bb0fb78ecb3def4b121569f4eae3f8ceda"
 dependencies = [
  "bytes",
  "chrono",

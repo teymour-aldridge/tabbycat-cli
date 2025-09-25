@@ -1,3 +1,11 @@
+## [0.3.0] - 2025-09-25
+
+- Rename from `tabbycat-import` to `tabbycat-cli` and structure this into
+  separate commands.
+- Set tournament before running commands (i.e. `tabbycat set`, follow the
+  prompts and then run commands).
+- Add support for viewing and editing draws.
+
 ## [0.2.0] - 2025-07-04
 
 - Add support for importing clashes.

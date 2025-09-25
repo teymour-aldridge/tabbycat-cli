@@ -74,7 +74,7 @@ pub fn swap(round: &str, a: &str, b: &str, auth: Auth) {
                 patch_adjudicators_in_pairing(&auth, &pairing_a);
             } else {
                 let a_loc = get_adj_ref(&adj1.url, &mut pairing_a);
-                let b_loc = get_adj_ref(&adj1.url, &mut pairing_b);
+                let b_loc = get_adj_ref(&adj2.url, &mut pairing_b);
                 *a_loc = adj2.url;
                 *b_loc = adj1.url;
                 patch_adjudicators_in_pairing(&auth, &pairing_a);

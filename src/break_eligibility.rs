@@ -53,8 +53,9 @@ pub fn do_compute_break_eligibility(auth: Auth, format: String) {
         let speaker_cat = speaker_categories
             .iter()
             .find(|s| s.name.to_ascii_lowercase() == break_cat.name.to_ascii_lowercase())
-            .unwrap_or_else(|| panic!("no matching category found for {}",
-                break_cat.name.as_str()));
+            .unwrap_or_else(|| {
+                panic!("no matching category found for {}", break_cat.name.as_str())
+            });
         map.insert(speaker_cat.url.clone(), break_cat.url.clone());
     }
 

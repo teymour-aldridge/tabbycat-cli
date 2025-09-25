@@ -1,4 +1,6 @@
-use crate::Auth;
+use tabbycat_api::types::RoundPairing;
+
+use crate::{Auth, dispatch_req::json_of_resp};
 
 pub fn get_rounds(
     Auth {
@@ -86,4 +88,14 @@ pub fn get_round(round: &str, auth: &Auth) -> tabbycat_api::types::Round {
         })
         .expect("the round you specified does not exist");
     round.clone()
+}
+
+pub fn pairings_of_round(auth: &Auth, round: &tabbycat_api::types::Round) -> Vec<RoundPairing> {
+    let pairings: Vec<tabbycat_api::types::RoundPairing> = json_of_resp(
+        attohttpc::get(&round.links.pairing)
+            .header("Authorization", format!("Token {}", auth.api_key))
+            .send()
+            .unwrap(),
+    );
+    pairings
 }

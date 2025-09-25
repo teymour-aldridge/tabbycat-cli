@@ -1,6 +1,7 @@
 use std::process::exit;
 
 use comfy_table::{Cell, Table, modifiers::UTF8_ROUND_CORNERS, presets::UTF8_FULL};
+use itertools::Itertools;
 
 use crate::{
     Auth,
@@ -42,13 +43,8 @@ pub fn view_draw(round: &String, auth: Auth) {
 
     let judges = get_judges(&auth);
 
-    let name_of_judge = |url: &str| -> String {
-        judges
-            .iter()
-            .find(|team| team.url == url)
-            .unwrap()
-            .name
-            .clone()
+    let name_of_judge = |url: &str| -> tabbycat_api::types::Adjudicator {
+        judges.iter().find(|team| team.url == url).unwrap().clone()
     };
 
     if pairings.is_empty() {
@@ -59,6 +55,7 @@ pub fn view_draw(round: &String, auth: Auth) {
 
     let headers = {
         let mut headers = Vec::new();
+        headers.push("id");
         headers.push("Nb");
         if teams_in_debate == 2 {
             headers.push("Prop");
@@ -82,11 +79,12 @@ pub fn view_draw(round: &String, auth: Auth) {
         .load_preset(UTF8_FULL)
         .set_content_arrangement(comfy_table::ContentArrangement::Dynamic)
         .apply_modifier(UTF8_ROUND_CORNERS)
-        .set_header(headers)
-        .set_width(80);
+        .set_header(headers);
 
-    for pairing in pairings {
+    for pairing in pairings.iter().sorted_by_key(|pairing| pairing.id) {
         let mut cells = Vec::new();
+
+        cells.push(Cell::new(pairing.id));
 
         cells.push(if matches!(pairing.sides_confirmed, Some(false) | None) {
             Cell::new("Sides not confirmed!".to_string()).bg(comfy_table::Color::Yellow)
@@ -110,10 +108,10 @@ pub fn view_draw(round: &String, auth: Auth) {
                 cells.push(Cell::new(String::new()));
             }
 
-            for team in pairing.teams {
+            for team in &pairing.teams {
                 match team.side {
                     Some(tabbycat_api::types::DebateTeamSide::Variant1(side)) => {
-                        cells[1 + match side {
+                        cells[2 + match side {
                             tabbycat_api::types::DebateTeamSideVariant1::Aff => 0,
                             tabbycat_api::types::DebateTeamSideVariant1::Neg => 1,
                             tabbycat_api::types::DebateTeamSideVariant1::Cg => 2,
@@ -127,24 +125,26 @@ pub fn view_draw(round: &String, auth: Auth) {
         }
 
         let mut judge_cell_contents = String::new();
-        if let Some(judges) = pairing.adjudicators {
+        if let Some(judges) = &pairing.adjudicators {
             let mut prev = false;
-            if let Some(chair) = judges.chair {
+            if let Some(chair) = &judges.chair {
                 let judge = (name_of_judge)(&chair);
-                judge_cell_contents += &format!("{judge} (c)");
+                judge_cell_contents += &format!("{} (c, id {})", judge.name, judge.id);
                 prev = true;
             }
-            for panelist in judges.panellists {
+            for panelist in &judges.panellists {
+                let judge = (name_of_judge)(&panelist);
                 if prev {
-                    judge_cell_contents += "\n";
+                    judge_cell_contents += "\n----\n";
                 }
-                judge_cell_contents += &format!("{}", (name_of_judge)(&panelist));
+                judge_cell_contents += &format!("{} (id {})", judge.name, judge.id);
             }
-            for trainee in judges.trainees {
+            for trainee in &judges.trainees {
+                let judge = (name_of_judge)(&trainee);
                 if prev {
                     judge_cell_contents += "\n";
                 }
-                judge_cell_contents += &format!("{} (t)", (name_of_judge)(&trainee));
+                judge_cell_contents += &format!("{} (t, id {})", judge.name, judge.id);
             }
         }
         cells.push(Cell::new(judge_cell_contents));

@@ -2,6 +2,7 @@ pub mod api_utils;
 pub mod break_eligibility;
 pub mod clear_rooms;
 pub mod dispatch_req;
+pub mod edit_draw;
 pub mod import;
 pub mod save_panels;
 pub mod sensible;
@@ -65,6 +66,23 @@ pub enum Command {
     },
     ViewDraw {
         round: String,
+    },
+    /// Swap two entities (either two teams, or two judges) on the draw.
+    DrawSwap {
+        round: String,
+        a: String,
+        b: String,
+    },
+    /// Add a judge to the draw for a given round.
+    AddJudge {
+        round: String,
+        judge: String,
+        room_id: String,
+        role: String,
+    },
+    RemoveJudge {
+        round: String,
+        judge: String,
     },
 }
 
@@ -224,6 +242,26 @@ fn main() {
             let auth = load_credentials();
 
             view_draw(&round, auth);
+        }
+        Command::DrawSwap { round, a, b } => {
+            let auth = load_credentials();
+
+            edit_draw::swap(&round, &a, &b, auth);
+        }
+        Command::AddJudge {
+            round,
+            room_id,
+            judge,
+            role,
+        } => {
+            let auth = load_credentials();
+
+            edit_draw::alloc(&round, &room_id, &judge, &role, auth);
+        }
+        Command::RemoveJudge { round, judge } => {
+            let auth = load_credentials();
+
+            edit_draw::remove(&round, &judge, auth);
         }
     }
 }

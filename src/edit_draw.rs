@@ -26,10 +26,7 @@ fn kind(
     judges: &[tabbycat_api::types::Adjudicator],
 ) -> Kind {
     if let Some(team) = teams.iter().find(|team| {
-        team.long_name
-            .clone()
-            .map(|n| n.to_lowercase().trim().to_string())
-            == Some(a.to_lowercase().trim().to_string())
+        team.long_name.to_lowercase().trim().to_string() == a.to_lowercase().trim().to_string()
             || team.short_name.to_lowercase().trim() == a.to_lowercase().trim()
     }) {
         Kind::Team(team.clone())

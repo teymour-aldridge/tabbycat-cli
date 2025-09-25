@@ -525,7 +525,7 @@ pub fn do_import(auth: Auth, import: Import) {
                         (String::new(), String::new())
                     };
 
-                team.long_name == Some(format!("{long_prefix}{}", team2import.full_name.trim()))
+                team.long_name == format!("{long_prefix}{}", team2import.full_name.trim())
                     || Some(format!("{short_prefix}{}", team.short_name.as_str()).as_str())
                         == team2import.short_name.as_ref().map(|t| t.trim())
                     || team.code_name.clone().map(|t| t.as_str().to_string())
@@ -661,9 +661,7 @@ pub fn do_import(auth: Auth, import: Import) {
                 let team: Team = resp.json().unwrap();
                 info!(
                     "Created team {} with id {} (institution: {:?})",
-                    team.long_name.clone().unwrap_or(team.short_name.clone()),
-                    team.id,
-                    inst
+                    team.long_name, team.id, inst
                 );
                 let url = team.url.clone();
                 teams.push(team.clone());
@@ -861,16 +859,12 @@ pub fn do_import(auth: Auth, import: Import) {
                 }
 
                 for team in teams {
-                    if team
-                        .long_name
-                        .clone()
-                        .map(|n| n.eq_ignore_ascii_case(key))
-                        .unwrap_or(false)
+                    if team.long_name.eq_ignore_ascii_case(key)
                         || team.short_name.eq_ignore_ascii_case(key)
                     {
                         debug!(
                             "Resolved {key} as team {} due to name match.",
-                            team.long_name.clone().unwrap_or(team.short_name.clone())
+                            team.long_name
                         );
                         return Some(ClashKind::Team(team.clone()));
                     }
@@ -883,7 +877,7 @@ pub fn do_import(auth: Auth, import: Import) {
                         debug!(
                             "Resolved {key} as team {} as provided key matched \
                              the speaker name.",
-                            team.clone().long_name.unwrap_or(team.short_name.clone())
+                            team.clone().long_name
                         );
                         return Some(ClashKind::Team(team.clone()));
                     }

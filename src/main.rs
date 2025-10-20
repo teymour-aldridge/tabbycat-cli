@@ -116,6 +116,12 @@ pub struct Import {
     /// take precedence over this flag.
     #[clap(default_value_t = false)]
     use_institution_prefix: bool,
+    /// Whether existing data should be overwitten. This is UNSAFE if you have
+    /// already sent private URLs (the old private URLs will be invalid for the
+    /// new team objects) or imported institutions/teams/speakers/judges from
+    /// elsewhere.
+    #[clap(default_value_t = false)]
+    overwrite: bool,
 }
 
 #[derive(Serialize, Deserialize, Clone)]

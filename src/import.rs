@@ -287,6 +287,48 @@ pub fn do_import(auth: Auth, import: Import) {
     }
     let mut judges: Vec<tabbycat_api::types::Adjudicator> = resp.json().unwrap();
 
+    if import.overwrite {
+        // todo: could track all objects which have a matching item in the
+        // spreadsheet and then delete those which don't
+
+        let _overwriting_span = span!(Level::INFO, "overwritting");
+
+        for judge in &judges {
+            info!("Removing previous judges");
+            attohttpc::delete(judge.url.clone())
+                .header("Authorization", format!("Token {}", auth.api_key))
+                .send()
+                .unwrap();
+        }
+
+        for team in &teams {
+            attohttpc::delete(team.url.clone())
+                .header("Authorization", format!("Token {}", auth.api_key))
+                .send()
+                .unwrap();
+        }
+
+        for institution in &institutions {
+            let resp = attohttpc::delete(institution.url.clone())
+                .header("Authorization", format!("Token {}", auth.api_key))
+                .send()
+                .unwrap();
+            if !resp.is_success() {
+                debug!(
+                    "Could not delete institution {}: {} {}",
+                    institution.name.to_string(),
+                    resp.status(),
+                    resp.text_utf8().unwrap()
+                );
+            }
+        }
+
+        judges.clear();
+        teams.clear();
+        institutions.clear();
+        speakers.clear();
+    }
+
     if let Some(mut institutions_csv) = institutions_csv {
         let headers = institutions_csv.headers().unwrap().clone();
         let institutions_span = span!(Level::INFO, "importing institutions");

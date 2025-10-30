@@ -291,10 +291,10 @@ pub fn do_import(auth: Auth, import: Import) {
         // todo: could track all objects which have a matching item in the
         // spreadsheet and then delete those which don't
 
-        let _overwriting_span = span!(Level::INFO, "overwritting");
+        let _overwriting_span = span!(Level::INFO, "overwriting");
 
         for judge in &judges {
-            info!("Removing previous judges");
+            info!("Deleting judge {}", judge.name);
             attohttpc::delete(judge.url.clone())
                 .header("Authorization", format!("Token {}", auth.api_key))
                 .send()
@@ -302,6 +302,7 @@ pub fn do_import(auth: Auth, import: Import) {
         }
 
         for team in &teams {
+            info!("Deleting team {}", team.short_name);
             attohttpc::delete(team.url.clone())
                 .header("Authorization", format!("Token {}", auth.api_key))
                 .send()
@@ -309,6 +310,8 @@ pub fn do_import(auth: Auth, import: Import) {
         }
 
         for institution in &institutions {
+            info!("Deleting institution {}", institution.name.as_str());
+
             let resp = attohttpc::delete(institution.url.clone())
                 .header("Authorization", format!("Token {}", auth.api_key))
                 .send()
@@ -456,57 +459,59 @@ pub fn do_import(auth: Auth, import: Import) {
 
                 // TODO: there should be a way to opt-out of setting this (or
                 // at least specify the default)
-                let norm = judge2import
-                    .availability
-                    .iter()
-                    .map(|availability| availability.to_ascii_lowercase())
-                    .collect::<HashSet<_>>();
-                for api_round in &rounds {
-                    let (available, method, url) = if norm
-                        .contains(&api_round.abbreviation.to_ascii_lowercase())
-                        || norm.contains(&api_round.name.to_ascii_lowercase())
-                    {
-                        (
-                            "available",
-                            attohttpc::Method::PUT,
-                            format!(
-                                "{api_addr}/tournaments/{}/rounds/{}/availabilities",
-                                auth.tournament_slug, api_round.seq
-                            ),
-                        )
-                    } else {
-                        (
-                            "unavailable",
-                            attohttpc::Method::POST,
-                            format!(
-                                "{api_addr}/tournaments/{}/rounds/{}/availabilities",
-                                auth.tournament_slug, api_round.seq
-                            ),
-                        )
-                    };
+                if import.set_availability {
+                    let norm = judge2import
+                        .availability
+                        .iter()
+                        .map(|availability| availability.to_ascii_lowercase())
+                        .collect::<HashSet<_>>();
+                    for api_round in &rounds {
+                        let (available, method, url) = if norm
+                            .contains(&api_round.abbreviation.to_ascii_lowercase())
+                            || norm.contains(&api_round.name.to_ascii_lowercase())
+                        {
+                            (
+                                "available",
+                                attohttpc::Method::PUT,
+                                format!(
+                                    "{api_addr}/tournaments/{}/rounds/{}/availabilities",
+                                    auth.tournament_slug, api_round.seq
+                                ),
+                            )
+                        } else {
+                            (
+                                "unavailable",
+                                attohttpc::Method::POST,
+                                format!(
+                                    "{api_addr}/tournaments/{}/rounds/{}/availabilities",
+                                    auth.tournament_slug, api_round.seq
+                                ),
+                            )
+                        };
 
-                    let resp = attohttpc::RequestBuilder::new(method, &url)
-                        .header("Authorization", format!("Token {}", auth.api_key))
-                        .json(&json!([judge.url]))
-                        .unwrap()
-                        .send()
-                        .unwrap();
+                        let resp = attohttpc::RequestBuilder::new(method, &url)
+                            .header("Authorization", format!("Token {}", auth.api_key))
+                            .json(&json!([judge.url]))
+                            .unwrap()
+                            .send()
+                            .unwrap();
 
-                    if !resp.is_success() {
-                        error!(
-                            "Failed to mark judge {} as {available} for round {}: {} {}",
-                            judge2import.name,
-                            api_round.name.as_str(),
-                            resp.status(),
-                            resp.text_utf8().unwrap()
-                        );
-                        panic!("Failed to mark judge as {available}");
-                    } else {
-                        info!(
-                            "Marked judge {} as {available} for round {}",
-                            judge2import.name,
-                            api_round.name.as_str()
-                        );
+                        if !resp.is_success() {
+                            error!(
+                                "Failed to mark judge {} as {available} for round {}: {} {}",
+                                judge2import.name,
+                                api_round.name.as_str(),
+                                resp.status(),
+                                resp.text_utf8().unwrap()
+                            );
+                            panic!("Failed to mark judge as {available}");
+                        } else {
+                            info!(
+                                "Marked judge {} as {available} for round {}",
+                                judge2import.name,
+                                api_round.name.as_str()
+                            );
+                        }
                     }
                 }
             } else {

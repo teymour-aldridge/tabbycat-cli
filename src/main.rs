@@ -120,8 +120,12 @@ pub struct Import {
     /// already sent private URLs (the old private URLs will be invalid for the
     /// new team objects) or imported institutions/teams/speakers/judges from
     /// elsewhere.
+    #[arg(long)]
     #[clap(default_value_t = false)]
     overwrite: bool,
+    #[arg(long)]
+    #[clap(default_value_t = false)]
+    set_availability: bool
 }
 
 #[derive(Serialize, Deserialize, Clone)]

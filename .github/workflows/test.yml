@@ -40,7 +40,7 @@ jobs:
           tool: nextest
       - name: Test
         run: |
-          cargo nextest run
+          cargo nextest run --no-capture
         shell: bash
 
   clippy:

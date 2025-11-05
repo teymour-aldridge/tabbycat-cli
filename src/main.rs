@@ -94,19 +94,22 @@ pub enum Command {
 #[derive(Debug, Parser, Clone)]
 pub struct Import {
     /// Path of the CSV file containing the institutions.
-    #[arg(long)]
+    #[arg(long, alias = "institutions")]
     institutions_csv: Option<String>,
 
-    #[arg(long)]
+    #[arg(long, alias = "judges")]
     /// Path of the CSV file containing the judges.
     judges_csv: Option<String>,
 
-    #[arg(long)]
+    #[arg(long, alias = "teams")]
     /// Path of the CSV file containing the teams.
     teams_csv: Option<String>,
 
-    #[arg(long)]
+    #[arg(long, alias = "clashes")]
     clashes_csv: Option<String>,
+
+    #[arg(long, alias = "rooms_csv")]
+    rooms: Option<String>,
 
     #[arg(long)]
     /// Whether teams should use be prefixed with the name of their institution

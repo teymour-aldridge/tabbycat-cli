@@ -30,6 +30,16 @@ pub struct InstitutionRow {
     pub full_name: String,
 }
 
+#[derive(Deserialize, Debug, Clone)]
+pub struct RoomRow {
+    #[serde(deserialize_with = "tags_deserialize", default = "Vec::new")]
+    pub categories: Vec<String>,
+    pub external_url: Option<String>,
+    pub barcode: Option<String>,
+    pub name: String,
+    pub priority: i64,
+}
+
 fn ret_false() -> bool {
     false
 }
@@ -205,6 +215,7 @@ pub async fn do_import(auth: Auth, import: Import) {
     let teams_csv = open_csv_file(import.teams_csv.clone(), true);
     let judges_csv = open_csv_file(import.judges_csv.clone(), true);
     let clashes_csv = open_csv_file(import.clashes_csv.clone(), false);
+    let rooms_csv = open_csv_file(import.rooms.clone(), true);
 
     let api_addr = format!("{}/api/v1", auth.tabbycat_url);
 
@@ -467,6 +478,87 @@ pub async fn do_import(auth: Auth, import: Import) {
     } else {
         info!("No institutions were provided to import.");
         institutions
+    };
+
+    if let Some(mut rooms_csv) = rooms_csv {
+        let rooms_span = span!(Level::INFO, "importing rooms");
+        let _rooms_guard = rooms_span.enter();
+        let headers = rooms_csv.headers().unwrap().clone();
+
+        let mut categories = HashMap::new();
+
+        tracing::info!("starting rooms import");
+
+        for room2import in rooms_csv.records() {
+            tracing::info!("adding room");
+
+            let room2import = room2import.unwrap();
+            let room2import: RoomRow = room2import.deserialize(Some(&headers)).unwrap();
+
+            let res = request_manager
+                .send_request(|| {
+                    request_manager
+                        .client
+                        .post(format!(
+                            "{}/tournaments/{}/venues",
+                            api_addr, auth.tournament_slug
+                        ))
+                        .json(&json!({
+                            "categories": [],
+                            "name": room2import.name,
+                            "priority": room2import.priority
+                        }))
+                        .build()
+                        .unwrap()
+                })
+                .await;
+
+            let room: tabbycat_api::types::Venue = res.json().await.unwrap();
+            for cat in room2import.categories {
+                categories
+                    .entry(cat)
+                    .and_modify(|cat: &mut Vec<_>| {
+                        cat.push(room.url.clone());
+                    })
+                    .or_insert({
+                        let mut v = Vec::new();
+                        v.push(room.url.clone());
+                        v
+                    });
+            }
+        }
+
+        for (key, values) in categories {
+            let res = request_manager
+                .send_request(|| {
+                    request_manager
+                        .client
+                        .post(format!(
+                            "{}/tournaments/{}/venue-categories",
+                            api_addr, auth.tournament_slug
+                        ))
+                        .json(&json!({
+                            "venues": values,
+                            "name": key,
+                            "display_in_venue_name": "P"
+                        }))
+                        .build()
+                        .unwrap()
+                })
+                .await;
+
+            if !res.status().is_success() {
+                error!(
+                    "Failed to create venue category '{}': status = {:?}, body = {}",
+                    key,
+                    res.status(),
+                    res.text()
+                        .await
+                        .unwrap_or_else(|_| "Unable to fetch response body".to_string())
+                );
+                panic!("Failed to create venue category");
+            }
+        }
     };
 
     let mut judges = if let Some(mut judges_csv) = judges_csv {

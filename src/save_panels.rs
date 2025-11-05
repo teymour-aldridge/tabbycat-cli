@@ -7,12 +7,15 @@ use tracing::info;
 use crate::{
     Auth,
     api_utils::{get_round, pairings_of_round},
+    request_manager::RequestManager,
 };
 
-pub fn save_panels(round: &str, to: &str, auth: Auth) {
-    let round = get_round(round, &auth);
+pub async fn save_panels(round: &str, to: &str, auth: Auth) {
+    let manager = RequestManager::new(&auth.api_key);
 
-    let pairings = pairings_of_round(&auth, &round);
+    let round = get_round(round, &auth, manager.clone()).await;
+
+    let pairings = pairings_of_round(&auth, &round, manager).await;
 
     std::fs::write(to, serde_json::to_string(&pairings).unwrap()).unwrap();
 
@@ -83,22 +86,24 @@ fn test_deserialize() {
     ).unwrap();
 }
 
-pub fn restore_panels(round: &str, to: &str, auth: Auth) {
-    let round = get_round(round, &auth);
+pub async fn restore_panels(round: &str, to: &str, auth: Auth) {
+    let manager = RequestManager::new(&auth.api_key);
+
+    let round = get_round(round, &auth, manager.clone()).await;
 
     let old_draw: Vec<tabbycat_api::types::RoundPairing> =
         serde_json::from_reader(BufReader::new(File::open(to).unwrap())).unwrap();
 
-    let live_pairings: Vec<tabbycat_api::types::RoundPairing> =
-        attohttpc::get(&round.links.pairing)
-            .header("Authorization", format!("Token {}", auth.api_key))
-            .send()
-            .unwrap()
-            .json::<Vec<tabbycat_api::types::RoundPairing>>()
-            .unwrap()
-            .into_iter()
-            .sorted_by_key(|k| k.room_rank.unwrap_or(i32::MAX))
-            .collect();
+    let live_pairings = manager
+        .send_request(|| {
+            let url = &round.links.pairing;
+            manager.client.get(url).build().unwrap()
+        })
+        .await;
+
+    let mut live_pairings: Vec<tabbycat_api::types::RoundPairing> =
+        live_pairings.json().await.unwrap();
+    live_pairings.sort_by_key(|k| k.room_rank.unwrap_or(i32::MAX));
 
     for (i, room) in old_draw
         .iter()
@@ -111,15 +116,22 @@ pub fn restore_panels(round: &str, to: &str, auth: Auth) {
     {
         let corresponding_room = &live_pairings[i];
 
-        attohttpc::post(&corresponding_room.url)
-            .header("Authorization", format!("Token {}", auth.api_key))
-            .json(&RoundPairing {
-                adjudicators: room.adjudicators.clone(),
-                ..corresponding_room.clone()
+        let res = manager
+            .send_request(|| {
+                manager
+                    .client
+                    .post(&corresponding_room.url)
+                    .json(&RoundPairing {
+                        adjudicators: room.adjudicators.clone(),
+                        ..corresponding_room.clone()
+                    })
+                    .build()
+                    .unwrap()
             })
-            .unwrap()
-            .send()
-            .unwrap();
+            .await;
+        if !res.status().is_success() {
+            panic!("{}", res.text().await.unwrap())
+        }
     }
 
     info!("Restored previous panels.")

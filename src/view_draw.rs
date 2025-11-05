@@ -7,30 +7,39 @@ use crate::{
     Auth,
     api_utils::{get_judges, get_round, get_teams},
     dispatch_req::json_of_resp,
+    request_manager::RequestManager,
 };
 
-pub fn view_draw(round: &str, auth: Auth) {
-    let round = get_round(round, &auth);
+pub async fn view_draw(round: &str, auth: Auth) {
+    let manager = RequestManager::new(&auth.api_key);
+
+    let round = get_round(round, &auth, manager.clone()).await;
 
     let teams_in_debate: tabbycat_api::types::Preference = json_of_resp(
-        attohttpc::get(format!(
-            "{}/api/v1/tournaments/{}/preferences/{}",
-            auth.tabbycat_url, auth.tournament_slug, "debate_rules__teams_in_debate"
-        ))
-        .header("Authorization", format!("Token {}", auth.api_key))
-        .send()
-        .unwrap(),
-    );
+        manager
+            .send_request(|| {
+                let url = format!(
+                    "{}/api/v1/tournaments/{}/preferences/{}",
+                    auth.tabbycat_url, auth.tournament_slug, "debate_rules__teams_in_debate"
+                );
+                manager.client.get(url).build().unwrap()
+            })
+            .await,
+    )
+    .await;
     let teams_in_debate = teams_in_debate.value.as_i64().unwrap();
 
     let pairings: Vec<tabbycat_api::types::RoundPairing> = json_of_resp(
-        attohttpc::get(&round.links.pairing)
-            .header("Authorization", format!("Token {}", auth.api_key))
-            .send()
-            .unwrap(),
-    );
+        manager
+            .send_request(|| {
+                let url = &round.links.pairing;
+                manager.client.get(url).build().unwrap()
+            })
+            .await,
+    )
+    .await;
 
-    let teams = get_teams(&auth);
+    let teams = get_teams(&auth, manager.clone()).await;
 
     let name_of_team = |url: &str| -> String {
         teams
@@ -41,7 +50,7 @@ pub fn view_draw(round: &str, auth: Auth) {
             .clone()
     };
 
-    let judges = get_judges(&auth);
+    let judges = get_judges(&auth, manager).await;
 
     let name_of_judge = |url: &str| -> tabbycat_api::types::Adjudicator {
         judges.iter().find(|team| team.url == url).unwrap().clone()

@@ -1,7 +1,9 @@
 use std::{
     collections::{HashMap, HashSet},
     process::exit,
+    sync::Arc,
 };
+use tokio::task::JoinSet;
 
 use itertools::Itertools;
 use serde::{
@@ -16,6 +18,7 @@ use crate::{
     Auth, Import,
     api_utils::{get_institutions, get_judges, get_rounds, get_teams},
     merge, open_csv_file,
+    request_manager::RequestManager,
 };
 
 #[derive(Deserialize, Debug, Clone)]
@@ -192,7 +195,12 @@ pub struct JudgeRow {
     pub availability: Vec<String>,
 }
 
-pub fn do_import(auth: Auth, import: Import) {
+pub async fn do_import(auth: Auth, import: Import) {
+    tracing::info!(
+        "Running import with these parameters: overwrite={}",
+        import.overwrite
+    );
+
     let institutions_csv = open_csv_file(import.institutions_csv.clone(), true);
     let teams_csv = open_csv_file(import.teams_csv.clone(), true);
     let judges_csv = open_csv_file(import.judges_csv.clone(), true);
@@ -200,80 +208,79 @@ pub fn do_import(auth: Auth, import: Import) {
 
     let api_addr = format!("{}/api/v1", auth.tabbycat_url);
 
-    let mut speaker_categories: Vec<tabbycat_api::types::SpeakerCategory> = {
-        let base_url = format!(
-            "{api_addr}/tournaments/{}/speaker-categories",
-            auth.tournament_slug
-        );
-        let resp = attohttpc::get(&base_url)
-            .header("Authorization", format!("Token {}", auth.api_key))
-            .send()
-            .unwrap();
+    let request_manager = RequestManager::new(&auth.api_key);
 
-        if !resp.is_success() {
-            panic!(
-                "url: {base_url} error {:?}
-                \n \n
-                RESPONSE \n
-                -----------------------------------------------
-                {}",
-                resp.status(),
-                resp.text_utf8().unwrap()
-            );
-        }
+    let compute_speaker_categories = async {
+        let speaker_categories: Vec<tabbycat_api::types::SpeakerCategory> = {
+            let resp = request_manager
+                .send_request(|| {
+                    let base_url = format!(
+                        "{api_addr}/tournaments/{}/speaker-categories",
+                        auth.tournament_slug
+                    );
 
-        resp.json().unwrap()
+                    request_manager.client.get(base_url).build().unwrap()
+                })
+                .await;
+
+            resp.json().await.unwrap()
+        };
+
+        speaker_categories
     };
 
-    let mut break_categories: Vec<tabbycat_api::types::BreakCategory> = {
-        let resource_loc = format!(
-            "{api_addr}/tournaments/{}/break-categories",
-            auth.tournament_slug
-        );
-        let resp = attohttpc::get(&resource_loc)
-            .header("Authorization", format!("Token {}", auth.api_key))
-            .send()
-            .unwrap();
+    let break_categories = async {
+        let resp = request_manager
+            .send_request(|| {
+                let resource_loc = format!(
+                    "{api_addr}/tournaments/{}/break-categories",
+                    auth.tournament_slug
+                );
 
-        if !resp.is_success() {
-            error!(
-                "Failed to fetch break categories: url={resource_loc}, status = {:?}, body = {}",
-                resp.status(),
-                resp.text_utf8().unwrap()
-            );
-            panic!("Failed to fetch break categories");
-        }
+                request_manager.client.get(resource_loc).build().unwrap()
+            })
+            .await;
 
-        resp.json().unwrap()
+        let break_categories: Vec<tabbycat_api::types::BreakCategory> = resp.json().await.unwrap();
+
+        break_categories
     };
 
-    let mut institutions: Vec<tabbycat_api::types::PerTournamentInstitution> =
-        get_institutions(&auth);
+    let institutions = get_institutions(&auth, request_manager.clone());
 
-    let mut speakers: Vec<tabbycat_api::types::Speaker> = {
-        let resp = attohttpc::get(format!(
-            "{api_addr}/tournaments/{}/speakers",
-            auth.tournament_slug
-        ))
-        .header("Authorization", format!("Token {}", auth.api_key))
-        .send()
-        .unwrap();
+    let speakers = async {
+        let resp = request_manager
+            .send_request(|| {
+                let url = format!("{api_addr}/tournaments/{}/speakers", auth.tournament_slug);
+                request_manager.client.get(url).build().unwrap()
+            })
+            .await;
 
-        if !resp.is_success() {
+        if !resp.status().is_success() {
             error!(
                 "Failed to fetch speakers: status = {:?}, body = {}",
                 resp.status(),
-                resp.text_utf8().unwrap()
+                resp.text().await.unwrap()
             );
             panic!("Failed to fetch speakers");
         }
 
-        resp.json().unwrap()
+        let speakers: Vec<tabbycat_api::types::Speaker> = resp.json().await.unwrap();
+        speakers
     };
 
-    let mut teams = get_teams(&auth);
+    let teams = get_teams(&auth, request_manager.clone());
 
-    let rounds = get_rounds(&auth);
+    let rounds = get_rounds(&auth, request_manager.clone());
+
+    let (speaker_categories, break_categories, mut institutions, mut speakers, mut teams, rounds) = tokio::join!(
+        compute_speaker_categories,
+        break_categories,
+        institutions,
+        speakers,
+        teams,
+        rounds
+    );
 
     let resp = attohttpc::get(format!(
         "{api_addr}/tournaments/{}/adjudicators",
@@ -293,38 +300,105 @@ pub fn do_import(auth: Auth, import: Import) {
 
         let _overwriting_span = span!(Level::INFO, "overwriting");
 
-        for judge in &judges {
-            info!("Deleting judge {}", judge.name);
-            attohttpc::delete(judge.url.clone())
-                .header("Authorization", format!("Token {}", auth.api_key))
-                .send()
-                .unwrap();
-        }
+        let _delete_judges = {
+            let mut join_set = JoinSet::new();
 
-        for team in &teams {
-            info!("Deleting team {}", team.short_name);
-            attohttpc::delete(team.url.clone())
-                .header("Authorization", format!("Token {}", auth.api_key))
-                .send()
-                .unwrap();
-        }
+            for judge in judges.iter() {
+                let request_manager = request_manager.clone();
+                let judge_name = judge.name.clone();
+                let judge_url = judge.url.clone();
 
-        for institution in &institutions {
-            info!("Deleting institution {}", institution.name.as_str());
-
-            let resp = attohttpc::delete(institution.url.clone())
-                .header("Authorization", format!("Token {}", auth.api_key))
-                .send()
-                .unwrap();
-            if !resp.is_success() {
-                debug!(
-                    "Could not delete institution {}: {} {}",
-                    institution.name.to_string(),
-                    resp.status(),
-                    resp.text_utf8().unwrap()
-                );
+                join_set.spawn(async move {
+                    info!("Deleting judge {}", judge_name);
+                    request_manager
+                        .send_request(|| {
+                            request_manager
+                                .client
+                                .delete(judge_url.clone())
+                                .build()
+                                .unwrap()
+                        })
+                        .await;
+                });
             }
-        }
+
+            while let Some(result) = join_set.join_next().await {
+                if let Err(err) = result {
+                    error!("Error occurred while deleting a judge: {:?}", err);
+                    panic!("failed to delete judge");
+                }
+            }
+        };
+
+        let _delete_teams = {
+            {
+                let mut join_set = JoinSet::new();
+
+                for team in &teams {
+                    let team_url = team.url.clone();
+                    let team_name = team.short_name.clone();
+
+                    let manager = request_manager.clone();
+                    join_set.spawn(async move {
+                        manager
+                            .send_request(|| {
+                                info!("Deleting team {}", team_name);
+                                let resp = manager.client.delete(team_url.clone()).build().unwrap();
+                                resp
+                            })
+                            .await;
+                    });
+                }
+
+                while let Some(result) = join_set.join_next().await {
+                    if let Err(err) = result {
+                        error!("Error occurred while deleting a team: {:?}", err);
+                        panic!("failed to delete team");
+                    }
+                }
+            }
+        };
+
+        let _delete_institutions = {
+            let mut join_set = JoinSet::new();
+
+            for institution in &institutions {
+                let institution_name = institution.name.clone();
+                let institution_url = institution.url.clone();
+                let request_manager = request_manager.clone();
+
+                join_set.spawn(async move {
+                    info!("Deleting institution {}", institution_name.as_str());
+
+                    let resp = request_manager
+                        .send_request(|| {
+                            request_manager
+                                .client
+                                .delete(institution_url.clone())
+                                .build()
+                                .unwrap()
+                        })
+                        .await;
+
+                    if !resp.status().is_success() {
+                        error!(
+                            "Could not delete institution {}: {} {}",
+                            institution_name.as_str(),
+                            resp.status(),
+                            resp.text().await.unwrap()
+                        );
+                        panic!("failed to delete!");
+                    }
+                });
+            }
+
+            while let Some(result) = join_set.join_next().await {
+                if let Err(err) = result {
+                    error!("Error occurred while deleting an institution: {:?}", err);
+                    panic!("failed to delete institutions");
+                }
+            }
+        };
 
         judges.clear();
         teams.clear();
@@ -332,41 +406,55 @@ pub fn do_import(auth: Auth, import: Import) {
         speakers.clear();
     }
 
-    if let Some(mut institutions_csv) = institutions_csv {
-        let headers = institutions_csv.headers().unwrap().clone();
+    let institutions = if let Some(mut institutions_csv) = institutions_csv {
+        let headers = Arc::new(institutions_csv.headers().unwrap().clone());
         let institutions_span = span!(Level::INFO, "importing institutions");
         let _institutions_guard = institutions_span.enter();
 
+        let institutions = Arc::new(tokio::sync::Mutex::new(institutions));
+
+        // note: institutions need to be processed sequentially to avoid
+        // running into Tabbycat bugs (!)
         for institution2import in institutions_csv.records() {
+            let api_addr = api_addr.clone();
+            let headers = headers.clone();
+            let request_manager = request_manager.clone();
+            let institutions = institutions.clone();
             let institution2import = institution2import.unwrap();
 
             let institution: InstitutionRow =
                 institution2import.deserialize(Some(&headers)).unwrap();
 
-            if !institutions.iter().any(|cmp| {
+            if !institutions.lock().await.iter().any(|cmp| {
                 cmp.name.as_str() == institution.full_name
                     || cmp.code.as_str() == institution.short_code
             }) {
-                let response = attohttpc::post(format!("{api_addr}/institutions"))
-                    .header("Authorization", format!("Token {}", auth.api_key))
-                    .json(&serde_json::json!({
-                        "region": institution.region,
-                        "name": institution.full_name,
-                        "code": institution.short_code
-                    }))
-                    .unwrap()
-                    .send()
-                    .unwrap();
-                if !response.is_success() {
-                    panic!("error: {}", response.text_utf8().unwrap());
+                let response = request_manager
+                    .clone()
+                    .send_request(|| {
+                        request_manager
+                            .client
+                            .post(format!("{api_addr}/institutions"))
+                            .json(&serde_json::json!({
+                                "region": institution.region,
+                                "name": institution.full_name,
+                                "code": institution.short_code
+                            }))
+                            .build()
+                            .unwrap()
+                    })
+                    .await;
+                if !response.status().is_success() {
+                    panic!("error: {}", response.text().await.unwrap());
                 }
-                let inst: tabbycat_api::types::PerTournamentInstitution = response.json().unwrap();
+                let inst: tabbycat_api::types::PerTournamentInstitution =
+                    response.json().await.unwrap();
                 info!(
                     "Institution {} added to Tabbycat, id is {}",
                     inst.name.as_str(),
                     inst.id
                 );
-                institutions.push(inst);
+                institutions.clone().lock().await.push(inst);
             } else {
                 info!(
                     "Institution {} already exists, not inserting",
@@ -374,480 +462,580 @@ pub fn do_import(auth: Auth, import: Import) {
                 );
             }
         }
-    } else {
-        info!("No institutions were provided to import.")
-    }
 
-    if let Some(mut judges_csv) = judges_csv {
-        let headers = judges_csv.headers().unwrap().clone();
+        institutions.clone().lock().await.clone()
+    } else {
+        info!("No institutions were provided to import.");
+        institutions
+    };
+
+    let mut judges = if let Some(mut judges_csv) = judges_csv {
+        let headers = Arc::new(judges_csv.headers().unwrap().clone());
         let judges_span = span!(Level::INFO, "importing judges");
         let _judges_guard = judges_span.enter();
 
+        let mut join_set = JoinSet::new();
+
+        let judges = Arc::new(tokio::sync::Mutex::new(judges.clone()));
+        let institutions = Arc::new(institutions.clone());
+        let rounds = Arc::new(rounds);
+
         for judge2import in judges_csv.records() {
-            let judge2import = judge2import.unwrap();
-            let judge2import: JudgeRow = judge2import.deserialize(Some(&headers)).unwrap();
+            let api_addr = api_addr.clone();
+            let headers = headers.clone();
+            let request_manager = request_manager.clone();
+            let judges = judges.clone();
+            let institutions = institutions.clone();
+            let rounds = rounds.clone();
+            let auth = auth.clone();
+            let import = import.clone();
 
-            if !judges.iter().any(|judge| judge.name == judge2import.name) {
-                let judge_inst_conflicts = institutions
+            join_set.spawn(async move {
+                let judge2import = judge2import.unwrap();
+                let judge2import: JudgeRow = judge2import.deserialize(Some(&headers)).unwrap();
+
+                if !judges
+                    .lock()
+                    .await
                     .iter()
-                    .filter(|inst_from_api| {
-                        judge2import
-                            .institution_clashes
-                            .iter()
-                            .any(|inst_judge_clashes| {
-                                inst_from_api.name.as_str() == inst_judge_clashes
-                                    || inst_from_api.code.as_str() == inst_judge_clashes
-                            })
-                    })
-                    .map(|inst| inst.url.clone())
-                    .collect::<Vec<_>>();
-
-                // todo: have a debug mode which logs debug output to a file
-
-                let inst_url = institutions
-                    .iter()
-                    .find(|api_inst| {
-                        Some(api_inst.name.as_str().to_string()) == judge2import.institution
-                            || Some(api_inst.code.as_str().to_string()) == judge2import.institution
-                    })
-                    .map(|inst| inst.url.clone());
-
-                if judge2import.institution.is_some() {
-                    assert!(
-                        inst_url.is_some(),
-                        "error: {:?} {:?}",
-                        judge2import.institution,
-                        institutions
-                    );
-                }
-
-                let mut payload = serde_json::json!({
-                    "name": judge2import.name,
-                    "institution": inst_url,
-                    "institution_conflicts": judge_inst_conflicts,
-                    "email": judge2import.email,
-                    "team_conflicts": [],
-                    "adjudicator_conflicts": [],
-                    "independent": judge2import.is_ia,
-                    "adj_core": judge2import.is_ca,
-                });
-
-                if let Some(base_score) = judge2import.base_score {
-                    tracing::trace!("base score {base_score}");
-                    merge(&mut payload, &json!({"base_score": base_score}));
-                }
-
-                tracing::trace!("data for request is: {payload:?}");
-
-                let resp = attohttpc::post(format!(
-                    "{api_addr}/tournaments/{}/adjudicators",
-                    auth.tournament_slug
-                ))
-                .header("Authorization", format!("Token {}", auth.api_key))
-                .json(&payload)
-                .unwrap()
-                .send()
-                .unwrap();
-                if !resp.is_success() {
-                    error!("error");
-                    panic!("error {:?} {}", resp.status(), resp.text_utf8().unwrap());
-                }
-
-                let judge: tabbycat_api::types::Adjudicator = resp.json().unwrap();
-                info!("Created judge {} with id {}", judge.name, judge.id);
-                judges.push(judge.clone());
-
-                // TODO: there should be a way to opt-out of setting this (or
-                // at least specify the default)
-                if import.set_availability {
-                    let norm = judge2import
-                        .availability
+                    .any(|judge| judge.name == judge2import.name)
+                {
+                    let judge_inst_conflicts = institutions
                         .iter()
-                        .map(|availability| availability.to_ascii_lowercase())
-                        .collect::<HashSet<_>>();
-                    for api_round in &rounds {
-                        let (available, method, url) = if norm
-                            .contains(&api_round.abbreviation.to_ascii_lowercase())
-                            || norm.contains(&api_round.name.to_ascii_lowercase())
-                        {
-                            (
-                                "available",
-                                attohttpc::Method::PUT,
-                                format!(
-                                    "{api_addr}/tournaments/{}/rounds/{}/availabilities",
-                                    auth.tournament_slug, api_round.seq
-                                ),
-                            )
-                        } else {
-                            (
-                                "unavailable",
-                                attohttpc::Method::POST,
-                                format!(
-                                    "{api_addr}/tournaments/{}/rounds/{}/availabilities",
-                                    auth.tournament_slug, api_round.seq
-                                ),
-                            )
-                        };
+                        .filter(|inst_from_api| {
+                            judge2import
+                                .institution_clashes
+                                .iter()
+                                .any(|inst_judge_clashes| {
+                                    inst_from_api.name.as_str() == inst_judge_clashes
+                                        || inst_from_api.code.as_str() == inst_judge_clashes
+                                })
+                        })
+                        .map(|inst| inst.url.clone())
+                        .collect::<Vec<_>>();
 
-                        let resp = attohttpc::RequestBuilder::new(method, &url)
-                            .header("Authorization", format!("Token {}", auth.api_key))
-                            .json(&json!([judge.url]))
-                            .unwrap()
-                            .send()
-                            .unwrap();
+                    // todo: have a debug mode which logs debug output to a file
 
-                        if !resp.is_success() {
-                            error!(
-                                "Failed to mark judge {} as {available} for round {}: {} {}",
-                                judge2import.name,
-                                api_round.name.as_str(),
-                                resp.status(),
-                                resp.text_utf8().unwrap()
-                            );
-                            panic!("Failed to mark judge as {available}");
-                        } else {
-                            info!(
-                                "Marked judge {} as {available} for round {}",
-                                judge2import.name,
-                                api_round.name.as_str()
-                            );
+                    let inst_url = institutions
+                        .iter()
+                        .find(|api_inst| {
+                            Some(api_inst.name.as_str().to_string()) == judge2import.institution
+                                || Some(api_inst.code.as_str().to_string())
+                                    == judge2import.institution
+                        })
+                        .map(|inst| inst.url.clone());
+
+                    if judge2import.institution.is_some() {
+                        assert!(
+                            inst_url.is_some(),
+                            "error: {:?} {:?}",
+                            judge2import.institution,
+                            institutions
+                        );
+                    }
+
+                    let mut payload = serde_json::json!({
+                        "name": judge2import.name,
+                        "institution": inst_url,
+                        "institution_conflicts": judge_inst_conflicts,
+                        "email": judge2import.email,
+                        "team_conflicts": [],
+                        "adjudicator_conflicts": [],
+                        "independent": judge2import.is_ia,
+                        "adj_core": judge2import.is_ca,
+                    });
+
+                    if let Some(base_score) = judge2import.base_score {
+                        tracing::trace!("base score {base_score}");
+                        merge(&mut payload, &json!({"base_score": base_score}));
+                    }
+
+                    tracing::trace!("data for request is: {payload:?}");
+
+                    let resp = request_manager
+                        .send_request(|| {
+                            request_manager
+                                .client
+                                .post(format!(
+                                    "{api_addr}/tournaments/{}/adjudicators",
+                                    auth.tournament_slug
+                                ))
+                                .json(&payload)
+                                .build()
+                                .unwrap()
+                        })
+                        .await;
+                    if !resp.status().is_success() {
+                        error!("error");
+                        panic!("error {:?} {}", resp.status(), resp.text().await.unwrap());
+                    }
+
+                    let judge: tabbycat_api::types::Adjudicator = resp.json().await.unwrap();
+                    info!("Created judge {} with id {}", judge.name, judge.id);
+                    judges.lock().await.push(judge.clone());
+
+                    // TODO: there should be a way to opt-out of setting this (or
+                    // at least specify the default)
+                    if import.set_availability {
+                        let norm = judge2import
+                            .availability
+                            .iter()
+                            .map(|availability| availability.to_ascii_lowercase())
+                            .collect::<HashSet<_>>();
+                        for api_round in rounds.iter() {
+                            let (available, method, url) = if norm
+                                .contains(&api_round.abbreviation.to_ascii_lowercase())
+                                || norm.contains(&api_round.name.to_ascii_lowercase())
+                            {
+                                (
+                                    "available",
+                                    "PUT",
+                                    format!(
+                                        "{api_addr}/tournaments/{}/rounds/{}/availabilities",
+                                        auth.tournament_slug, api_round.seq
+                                    ),
+                                )
+                            } else {
+                                (
+                                    "unavailable",
+                                    "POST",
+                                    format!(
+                                        "{api_addr}/tournaments/{}/rounds/{}/availabilities",
+                                        auth.tournament_slug, api_round.seq
+                                    ),
+                                )
+                            };
+
+                            let resp = request_manager
+                                .send_request(|| {
+                                    let req = if method == "PUT" {
+                                        request_manager.client.put(&url)
+                                    } else {
+                                        request_manager.client.post(&url)
+                                    };
+                                    req.json(&json!([judge.url])).build().unwrap()
+                                })
+                                .await;
+
+                            if !resp.status().is_success() {
+                                error!(
+                                    "Failed to mark judge {} as {available} for round {}: {} {}",
+                                    judge2import.name,
+                                    api_round.name.as_str(),
+                                    resp.status(),
+                                    resp.text().await.unwrap()
+                                );
+                                panic!("Failed to mark judge as {available}");
+                            } else {
+                                info!(
+                                    "Marked judge {} as {available} for round {}",
+                                    judge2import.name,
+                                    api_round.name.as_str()
+                                );
+                            }
                         }
                     }
+                } else {
+                    info!(
+                        "Judge {} already exists, therefore not creating a record \
+                        for this judge.",
+                        judge2import.name
+                    );
                 }
-            } else {
-                info!(
-                    "Judge {} already exists, therefore not creating a record \
-                    for this judge.",
-                    judge2import.name
-                );
+            });
+        }
+
+        while let Some(result) = join_set.join_next().await {
+            if let Err(err) = result {
+                error!("Error occurred while importing a judge: {:?}", err);
+                panic!("Failed to import judge");
             }
         }
-    } else {
-        info!("No judges were provided to import.")
-    }
 
-    if let Some(mut teams_csv) = teams_csv {
-        let headers = teams_csv.headers().unwrap().clone();
+        let judges = judges.lock().await.clone();
+        judges
+    } else {
+        info!("No judges were provided to import.");
+        judges
+    };
+
+    let (mut teams, _, _, _) = if let Some(mut teams_csv) = teams_csv {
+        let headers = Arc::new(teams_csv.headers().unwrap().clone());
         let teams_span = span!(Level::INFO, "importing teams");
         let _teams_guard = teams_span.enter();
 
+        let mut join_set = JoinSet::new();
+
+        let teams = Arc::new(tokio::sync::Mutex::new(teams.clone()));
+        let speakers = Arc::new(tokio::sync::Mutex::new(speakers));
+        let break_categories = Arc::new(tokio::sync::Mutex::new(break_categories));
+        let speaker_categories = Arc::new(tokio::sync::Mutex::new(speaker_categories));
+        let institutions = Arc::new(institutions.clone());
+
         for team2import in teams_csv.records() {
-            let team2import = team2import.unwrap();
-            let team2import: TeamRow = team2import.deserialize(Some(&headers)).unwrap();
+            let api_addr = api_addr.clone();
+            let headers = headers.clone();
+            let request_manager = request_manager.clone();
+            let teams = teams.clone();
+            let speakers = speakers.clone();
+            let break_categories = break_categories.clone();
+            let speaker_categories = speaker_categories.clone();
+            let institutions = institutions.clone();
+            let auth = auth.clone();
+            let import = import.clone();
 
-            let inst_of_team2_import = institutions.iter().find(|api_inst| {
-                Some(api_inst.name.as_str().to_lowercase())
-                    == team2import.institution.as_ref().map(|t| t.to_lowercase())
-                    || Some(api_inst.code.as_str().to_lowercase())
+            join_set.spawn(async move {
+                let team2import = team2import.unwrap();
+                let team2import: TeamRow = team2import.deserialize(Some(&headers)).unwrap();
+
+                let inst_of_team2_import = institutions.iter().find(|api_inst| {
+                    Some(api_inst.name.as_str().to_lowercase())
                         == team2import.institution.as_ref().map(|t| t.to_lowercase())
-            });
+                        || Some(api_inst.code.as_str().to_lowercase())
+                            == team2import.institution.as_ref().map(|t| t.to_lowercase())
+                });
 
-            let team_url = if let Some(team) = teams.iter().find(|team| {
-                let (long_prefix, short_prefix) =
-                    if team2import.use_institution_prefix || import.use_institution_prefix {
-                        if let Some(inst) = inst_of_team2_import {
-                            (
-                                format!("{} ", inst.name.as_str()),
-                                format!("{} ", inst.code.as_str()),
-                            )
+                let teams_lock = teams.lock().await;
+                let team_url = if let Some(team) = teams_lock.iter().find(|team| {
+                    let (long_prefix, short_prefix) =
+                        if team2import.use_institution_prefix || import.use_institution_prefix {
+                            if let Some(inst) = inst_of_team2_import {
+                                (
+                                    format!("{} ", inst.name.as_str()),
+                                    format!("{} ", inst.code.as_str()),
+                                )
+                            } else {
+                                (String::new(), String::new())
+                            }
                         } else {
                             (String::new(), String::new())
+                        };
+
+                    team.long_name == format!("{long_prefix}{}", team2import.full_name.trim())
+                        || Some(format!("{short_prefix}{}", team.short_name.as_str()).as_str())
+                            == team2import.short_name.as_ref().map(|t| t.trim())
+                        || team.code_name.clone().map(|t| t.as_str().to_string())
+                            == team2import.code_name.as_ref().map(|t| t.trim().to_string())
+                }) {
+                    info!(
+                        "Team {} already exists, therefore not creating a record \
+                        for this team.",
+                        team2import.full_name
+                    );
+                    team.url.clone()
+                } else {
+                    drop(teams_lock);
+                    let inst = inst_of_team2_import.map(|inst| inst.url.clone());
+
+                    if team2import.institution.is_some() {
+                        if inst.is_none() {
+                            error!(
+                                "Team {} belongs to institution {:?}, however, no \
+                                corresponding institution was defined in {}.",
+                                team2import.full_name,
+                                team2import.institution.unwrap(),
+                                import.institutions_csv.as_ref().unwrap()
+                            );
                         }
-                    } else {
-                        (String::new(), String::new())
+                        assert!(inst.is_some());
+                    }
+
+                    let break_category_urls = {
+                        let mut break_categories_lock = break_categories.lock().await;
+                        let category_and_optionally_url = team2import
+                            .categories
+                            .iter()
+                            .map(|team2_import_category_name| {
+                                assert!(!team2_import_category_name.is_empty());
+                                (
+                                    team2_import_category_name,
+                                    break_categories_lock
+                                        .iter()
+                                        .find(|api_cat| {
+                                            api_cat
+                                                .slug
+                                                .as_str()
+                                                .eq_ignore_ascii_case(team2_import_category_name.trim())
+                                        })
+                                        .cloned(),
+                                )
+                            })
+                            .collect::<Vec<_>>();
+
+                        let mut result = Vec::new();
+                        for (name, api_category) in category_and_optionally_url {
+                            match api_category {
+                                Some(t) => result.push(t.url.clone()),
+                                None => {
+                                    let seq = break_categories_lock.len() + 1;
+                                    let resp = request_manager
+                                        .send_request(|| {
+                                            request_manager
+                                                .client
+                                                .post(format!(
+                                                    "{api_addr}/tournaments/{}/break-categories",
+                                                    auth.tournament_slug
+                                                ))
+                                                .json(&serde_json::json!({
+                                                    "name": name,
+                                                    "slug": name.to_ascii_lowercase(),
+                                                    "seq": seq,
+                                                    "break_size": 4,
+                                                    "is_general": false,
+                                                    "priority": 1
+                                                }))
+                                                .build()
+                                                .unwrap()
+                                        })
+                                        .await;
+
+                                    if !resp.status().is_success() {
+                                        panic!(
+                                            "error when creating category {name}\n
+                                            {:?} {}",
+                                            resp.status(),
+                                            resp.text().await.unwrap()
+                                        );
+                                    }
+
+                                    let category: BreakCategory = resp.json().await.unwrap();
+                                    result.push(category.url.clone());
+                                    break_categories_lock.push(category);
+                                }
+                            }
+                        }
+                        result
                     };
 
-                team.long_name == format!("{long_prefix}{}", team2import.full_name.trim())
-                    || Some(format!("{short_prefix}{}", team.short_name.as_str()).as_str())
-                        == team2import.short_name.as_ref().map(|t| t.trim())
-                    || team.code_name.clone().map(|t| t.as_str().to_string())
-                        == team2import.code_name.as_ref().map(|t| t.trim().to_string())
-            }) {
-                info!(
-                    "Team {} already exists, therefore not creating a record \
-                    for this team.",
-                    team2import.full_name
-                );
-                team.url.clone()
-            } else {
-                let inst = inst_of_team2_import.map(|inst| inst.url.clone());
-
-                if team2import.institution.is_some() {
-                    if inst.is_none() {
-                        error!(
-                            "Team {} belongs to institution {:?}, however, no \
-                            corresponding institution was defined in {}.",
-                            team2import.full_name,
-                            team2import.institution.unwrap(),
-                            import.institutions_csv.as_ref().unwrap()
-                        );
-                    }
-                    assert!(inst.is_some());
-                }
-
-                let break_category_urls = {
-                    let category_and_optionally_url = team2import
-                        .categories
-                        .iter()
-                        .map(|team2_import_category_name| {
-                            assert!(!team2_import_category_name.is_empty());
-                            (
-                                team2_import_category_name,
-                                break_categories
-                                    .iter()
-                                    .find(|api_cat| {
-                                        api_cat
-                                            .slug
-                                            .as_str()
-                                            .eq_ignore_ascii_case(team2_import_category_name.trim())
-                                    })
-                                    .cloned(),
-                            )
+                    let mut payload = {
+                        serde_json::json!({
+                            "institution": inst,
+                            "reference": team2import.full_name,
+                            "seed": team2import.seed,
+                            "emoji": team2import.emoji,
+                            "use_institution_prefix":
+                                // TODO: document this behaviour
+                                import.use_institution_prefix
+                                || team2import.use_institution_prefix,
+                            "break_categories": break_category_urls,
+                            // note: we don't add speakers here!
                         })
-                        .collect::<Vec<_>>();
+                    };
 
-                    category_and_optionally_url
-                        .into_iter()
-                        .map(|(name, api_category)| match api_category {
-                            Some(t) => t.clone(),
-                            None => {
-                                let seq = break_categories.len() + 1;
-                                let resp = attohttpc::post(format!(
-                                    "{api_addr}/tournaments/{}/break-categories",
+                    if let Some(code_name) = team2import.code_name {
+                        merge(&mut payload, &json!({"code_name": code_name}));
+                    }
+
+                    if let Some(short_name) = team2import.short_name {
+                        merge(&mut payload, &json!({"short_reference": short_name}));
+                    }
+
+                    let resp = request_manager
+                        .send_request(|| {
+                            request_manager
+                                .client
+                                .post(format!(
+                                    "{api_addr}/tournaments/{}/teams",
                                     auth.tournament_slug
                                 ))
-                                .header("Authorization", format!("Token {}", auth.api_key))
-                                .header("content-type", "application/json")
-                                .json(&serde_json::json!({
-                                    "name": name,
-                                    "slug": name.to_ascii_lowercase(),
-                                    "seq": seq,
-                                    "break_size": 4,
-                                    "is_general": false,
-                                    "priority": 1
-                                }))
+                                .json(&payload)
+                                .build()
                                 .unwrap()
-                                .send()
-                                .unwrap();
-
-                                if !resp.is_success() {
-                                    panic!(
-                                        "error when creating category {name}\n
-                                        {:?} {}",
-                                        resp.status(),
-                                        resp.text_utf8().unwrap()
-                                    );
-                                }
-
-                                let category: BreakCategory = resp.json().unwrap();
-                                break_categories.push(category.clone());
-                                category
-                            }
                         })
-                        .map(|t| t.url.clone())
-                        .collect::<Vec<_>>()
-                };
-
-                let mut payload = {
-                    serde_json::json!({
-                        "institution": inst,
-                        "reference": team2import.full_name,
-                        "seed": team2import.seed,
-                        "emoji": team2import.emoji,
-                        "use_institution_prefix":
-                            // TODO: document this behaviour
-                            import.use_institution_prefix
-                            || team2import.use_institution_prefix,
-                        "break_categories": break_category_urls,
-                        // note: we don't add speakers here!
-                    })
-                };
-
-                if let Some(code_name) = team2import.code_name {
-                    merge(&mut payload, &json!({"code_name": code_name}));
-                }
-
-                if let Some(short_name) = team2import.short_name {
-                    merge(&mut payload, &json!({"short_reference": short_name}));
-                }
-
-                let resp = attohttpc::post(format!(
-                    "{api_addr}/tournaments/{}/teams",
-                    auth.tournament_slug
-                ))
-                .header("Authorization", format!("Token {}", auth.api_key))
-                .header("content-type", "application/json")
-                .json(&payload)
-                .unwrap()
-                .send()
-                .unwrap();
-                if !resp.is_success() {
-                    panic!(
-                        "error (team is {}) {:?} {} \n {:#?}",
-                        team2import.full_name,
-                        resp.status(),
-                        resp.text_utf8().unwrap(),
-                        teams
-                    );
-                }
-                let team: Team = resp.json().unwrap();
-                info!(
-                    "Created team {} with id {} (institution: {:?})",
-                    team.long_name, team.id, inst
-                );
-                let url = team.url.clone();
-                teams.push(team.clone());
-                url
-            };
-
-            let team_span = span!(Level::INFO, "team", team_name = team2import.full_name);
-            let _team_guard = team_span.enter();
-            for speaker2import in team2import.speakers {
-                if !speakers.iter().any(|speaker| {
-                    speaker.name.trim() == speaker2import.name.trim()
-                        || speaker
-                            .url_key
-                            .clone()
-                            .map(|key| Some(key.as_str().to_string()) == speaker2import.url_key)
-                            .unwrap_or(false)
-                }) {
-                    let speaker_category_urls = {
-                        let mut ret = Vec::new();
-                        for speaker2import_cat in speaker2import.categories {
-                            let speaker2import_cat = speaker2import_cat.trim();
-                            let category_from_tabbycat = speaker_categories
-                                .iter()
-                                .find(|api_cat| {
-                                    api_cat.slug.as_str().to_ascii_lowercase().trim()
-                                        == speaker2import_cat.to_ascii_lowercase()
-                                })
-                                .cloned();
-
-                            match category_from_tabbycat {
-                                Some(t) => ret.push(t.clone().url),
-                                None => {
-                                    let seq = speaker_categories.len() + 1;
-                                    let resp = attohttpc::post(format!(
-                                        "{api_addr}/tournaments/{}/speaker-categories",
-                                        auth.tournament_slug
-                                    ))
-                                    .header("Authorization", format!("Token {}", auth.api_key))
-                                    .header("content-type", "application/json")
-                                    .json(&serde_json::json!({
-                                        "name": speaker2import_cat,
-                                        "slug": speaker2import_cat,
-                                        "seq": seq
-                                    }))
-                                    .unwrap()
-                                    .send()
-                                    .unwrap();
-                                    if !resp.is_success() {
-                                        panic!(
-                                            "Error: request failed, (note: \
-                                            response body is {}) \n
-                                            category: {speaker2import_cat} \n
-                                            ",
-                                            resp.text_utf8().unwrap()
-                                        )
-                                    }
-                                    let category: SpeakerCategory = resp.json().unwrap();
-                                    speaker_categories.push(category.clone());
-                                    ret.push(category.url);
-                                }
-                            }
-                        }
-                        ret
-                    };
-
-                    let mut payload = json!({
-                        "name": speaker2import.name,
-                        "team": team_url,
-                        "categories": speaker_category_urls,
-                        "email": speaker2import.email,
-                        "anonymous": speaker2import.anonymous,
-                    });
-
-                    if let Some(code_name) = speaker2import.code_name {
-                        merge(
-                            &mut payload,
-                            &json!({
-                                "code_name": code_name,
-                            }),
+                        .await;
+                    if !resp.status().is_success() {
+                        panic!(
+                            "error (team is {}) {:?} {} \n {:#?}",
+                            team2import.full_name,
+                            resp.status(),
+                            resp.text().await.unwrap(),
+                            teams.lock().await
                         );
                     }
-
-                    if let Some(phone) = speaker2import.phone {
-                        merge(
-                            &mut payload,
-                            &json!({
-                                "phone": phone,
-                            }),
-                        )
-                    }
-
-                    if let Some(gender) = speaker2import.gender {
-                        merge(
-                            &mut payload,
-                            &json!({
-                                "gender": gender,
-                            }),
-                        )
-                    }
-
-                    if let Some(pronoun) = speaker2import.pronoun {
-                        merge(
-                            &mut payload,
-                            &json!({
-                                "pronoun": pronoun,
-                            }),
-                        )
-                    }
-
-                    let resp = attohttpc::post(format!(
-                        "{api_addr}/tournaments/{}/speakers",
-                        auth.tournament_slug
-                    ))
-                    .header("Authorization", format!("Token {}", auth.api_key))
-                    .header("Content-Type", "application/json")
-                    .json(&payload)
-                    .unwrap()
-                    .send()
-                    .unwrap();
-
-                    // TODO: we can format the JSON error messages in a more
-                    // human-friendly way
-                    if !resp.is_success() {
-                        panic!("error {:?} {}", resp.status(), resp.text_utf8().unwrap());
-                    }
-
-                    let speaker: tabbycat_api::types::Speaker = resp.json().unwrap();
-                    info!("Created speaker {} with id {}", speaker.name, speaker.id);
-                    speakers.push(speaker.clone());
-                    let team = teams
-                        .iter_mut()
-                        .find(|team| team.url == speaker.team)
-                        .unwrap();
-                    *team = attohttpc::get(team.url.clone())
-                        .header("Authorization", format!("Token {}", auth.api_key))
-                        .header("Content-Type", "application/json")
-                        .json(&payload)
-                        .unwrap()
-                        .send()
-                        .unwrap()
-                        .json()
-                        .unwrap();
-                } else {
+                    let team: Team = resp.json().await.unwrap();
                     info!(
-                        "Speaker {} already exists, therefore not creating a \
-                        record for this speaker.",
-                        speaker2import.name
+                        "Created team {} with id {} (institution: {:?})",
+                        team.long_name, team.id, inst
                     );
+                    let url = team.url.clone();
+                    teams.lock().await.push(team.clone());
+                    url
+                };
+
+                let team_span = span!(Level::INFO, "team", team_name = team2import.full_name);
+                let _team_guard = team_span.enter();
+                for speaker2import in team2import.speakers {
+                    let speakers_lock = speakers.lock().await;
+                    if !speakers_lock.iter().any(|speaker| {
+                        speaker.name.trim() == speaker2import.name.trim()
+                            || speaker
+                                .url_key
+                                .clone()
+                                .map(|key| Some(key.as_str().to_string()) == speaker2import.url_key)
+                                .unwrap_or(false)
+                    }) {
+                        drop(speakers_lock);
+                        let speaker_category_urls = {
+                            let mut speaker_categories_lock = speaker_categories.lock().await;
+                            let mut ret = Vec::new();
+                            for speaker2import_cat in speaker2import.categories {
+                                let speaker2import_cat = speaker2import_cat.trim();
+                                let category_from_tabbycat = speaker_categories_lock
+                                    .iter()
+                                    .find(|api_cat| {
+                                        api_cat.slug.as_str().to_ascii_lowercase().trim()
+                                            == speaker2import_cat.to_ascii_lowercase()
+                                    })
+                                    .cloned();
+
+                                match category_from_tabbycat {
+                                    Some(t) => ret.push(t.clone().url),
+                                    None => {
+                                        let seq = speaker_categories_lock.len() + 1;
+                                        let resp = request_manager
+                                            .send_request(|| {
+                                                request_manager
+                                                    .client
+                                                    .post(format!(
+                                                        "{api_addr}/tournaments/{}/speaker-categories",
+                                                        auth.tournament_slug
+                                                    ))
+                                                    .json(&serde_json::json!({
+                                                        "name": speaker2import_cat,
+                                                        "slug": speaker2import_cat,
+                                                        "seq": seq
+                                                    }))
+                                                    .build()
+                                                    .unwrap()
+                                            })
+                                            .await;
+                                        if !resp.status().is_success() {
+                                            panic!(
+                                                "Error: request failed, (note: \
+                                                response body is {}) \n
+                                                category: {speaker2import_cat} \n
+                                                ",
+                                                resp.text().await.unwrap()
+                                            )
+                                        }
+                                        let category: SpeakerCategory = resp.json().await.unwrap();
+                                        ret.push(category.url.clone());
+                                        speaker_categories_lock.push(category);
+                                    }
+                                }
+                            }
+                            ret
+                        };
+
+                        let mut payload = json!({
+                            "name": speaker2import.name,
+                            "team": team_url,
+                            "categories": speaker_category_urls,
+                            "email": speaker2import.email,
+                            "anonymous": speaker2import.anonymous,
+                        });
+
+                        if let Some(code_name) = speaker2import.code_name {
+                            merge(
+                                &mut payload,
+                                &json!({
+                                    "code_name": code_name,
+                                }),
+                            );
+                        }
+
+                        if let Some(phone) = speaker2import.phone {
+                            merge(
+                                &mut payload,
+                                &json!({
+                                    "phone": phone,
+                                }),
+                            )
+                        }
+
+                        if let Some(gender) = speaker2import.gender {
+                            merge(
+                                &mut payload,
+                                &json!({
+                                    "gender": gender,
+                                }),
+                            )
+                        }
+
+                        if let Some(pronoun) = speaker2import.pronoun {
+                            merge(
+                                &mut payload,
+                                &json!({
+                                    "pronoun": pronoun,
+                                }),
+                            )
+                        }
+
+                        let resp = request_manager
+                            .send_request(|| {
+                                request_manager
+                                    .client
+                                    .post(format!(
+                                        "{api_addr}/tournaments/{}/speakers",
+                                        auth.tournament_slug
+                                    ))
+                                    .json(&payload)
+                                    .build()
+                                    .unwrap()
+                            })
+                            .await;
+
+                        // TODO: we can format the JSON error messages in a more
+                        // human-friendly way
+                        if !resp.status().is_success() {
+                            panic!("error {:?} {}", resp.status(), resp.text().await.unwrap());
+                        }
+
+                        let speaker: tabbycat_api::types::Speaker = resp.json().await.unwrap();
+                        info!("Created speaker {} with id {}", speaker.name, speaker.id);
+                        speakers.lock().await.push(speaker.clone());
+                        let mut teams_lock = teams.lock().await;
+                        let team = teams_lock
+                            .iter_mut()
+                            .find(|team| team.url == speaker.team)
+                            .unwrap();
+                        let updated_team_resp = request_manager
+                            .send_request(|| {
+                                request_manager
+                                    .client
+                                    .get(team.url.clone())
+                                    .build()
+                                    .unwrap()
+                            })
+                            .await;
+                        *team = updated_team_resp.json().await.unwrap();
+                    } else {
+                        info!(
+                            "Speaker {} already exists, therefore not creating a \
+                            record for this speaker.",
+                            speaker2import.name
+                        );
+                    }
                 }
+            });
+        }
+
+        while let Some(result) = join_set.join_next().await {
+            if let Err(err) = result {
+                error!("Error occurred while importing a team: {:?}", err);
+                panic!("Failed to import team");
             }
         }
+
+        let teams = teams.lock().await.clone();
+        let speakers = speakers.lock().await.clone();
+        let break_categories = break_categories.lock().await.clone();
+        let speaker_categories = speaker_categories.lock().await.clone();
+        (teams, speakers, break_categories, speaker_categories)
     } else {
-        info!("No teams were provided to import.")
-    }
+        info!("No teams were provided to import.");
+        (teams, speakers, break_categories, speaker_categories)
+    };
 
     if let Some(mut clashes_csv) = clashes_csv {
         for clash2import in clashes_csv.records() {
@@ -867,10 +1055,14 @@ pub fn do_import(auth: Auth, import: Import) {
     }
 }
 
-pub fn add_clash_cmd(a: &str, b: &str, auth: &Auth) {
-    let mut teams = get_teams(&auth);
-    let mut judges = get_judges(&auth);
-    let mut institutions = get_institutions(&auth);
+pub async fn add_clash_cmd(a: &str, b: &str, auth: &Auth) {
+    let request_manager = RequestManager::new(&auth.api_key);
+
+    let (mut teams, mut judges, mut institutions) = tokio::join!(
+        get_teams(&auth, request_manager.clone()),
+        get_judges(&auth, request_manager.clone()),
+        get_institutions(&auth, request_manager.clone())
+    );
 
     add_clash(
         auth,

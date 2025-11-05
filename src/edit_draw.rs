@@ -4,6 +4,7 @@ use tabbycat_api::types::DebateAdjudicator;
 use crate::{
     Auth,
     api_utils::{get_judges, get_round, get_teams, pairings_of_round},
+    request_manager::RequestManager,
 };
 
 enum Kind {
@@ -41,12 +42,15 @@ fn kind(
     }
 }
 
-pub fn swap(round: &str, a: &str, b: &str, auth: Auth) {
-    let teams = get_teams(&auth);
-    let judges = get_judges(&auth);
+pub async fn swap(round: &str, a: &str, b: &str, auth: Auth) {
+    let manager = RequestManager::new(&auth.api_key);
 
-    let round = get_round(round, &auth);
-    let pairings = pairings_of_round(&auth, &round);
+    let (teams, judges, round) = tokio::join! {
+        get_teams(&auth, manager.clone()),
+        get_judges(&auth, manager.clone()),
+        get_round(round, &auth, manager.clone()),
+    };
+    let pairings = pairings_of_round(&auth, &round, manager.clone()).await;
 
     let a = (kind)(a, &teams, &judges);
     let b = (kind)(b, &teams, &judges);
@@ -208,7 +212,9 @@ enum Role {
     T,
 }
 
-pub fn alloc(round: &str, to: &str, a: &str, role: &str, auth: Auth) {
+pub async fn alloc(round: &str, to: &str, a: &str, role: &str, auth: Auth) {
+    let manager = RequestManager::new(&auth.api_key);
+
     let to = match to.parse::<i64>() {
         Ok(t) => t,
         Err(_) => {
@@ -228,11 +234,13 @@ pub fn alloc(round: &str, to: &str, a: &str, role: &str, auth: Auth) {
         }
     };
 
-    let teams = get_teams(&auth);
-    let judges = get_judges(&auth);
+    let (teams, judges, round) = tokio::join! {
+        get_teams(&auth, manager.clone()),
+        get_judges(&auth, manager.clone()),
+        get_round(round, &auth, manager.clone())
+    };
 
-    let round = get_round(round, &auth);
-    let pairings = pairings_of_round(&auth, &round);
+    let pairings = pairings_of_round(&auth, &round, manager.clone()).await;
 
     let judge = match kind(a, &teams, &judges) {
         Kind::Judge(adjudicator) => adjudicator,
@@ -276,12 +284,15 @@ pub fn alloc(round: &str, to: &str, a: &str, role: &str, auth: Auth) {
     }
 }
 
-pub fn remove(round: &str, a: &str, auth: Auth) {
-    let teams = get_teams(&auth);
-    let judges = get_judges(&auth);
+pub async fn remove(round: &str, a: &str, auth: Auth) {
+    let manager = RequestManager::new(&auth.api_key);
 
-    let round = get_round(round, &auth);
-    let pairings = pairings_of_round(&auth, &round);
+    let (teams, judges, round) = tokio::join! {
+        get_teams(&auth, manager.clone()),
+        get_judges(&auth, manager.clone()),
+        get_round(round, &auth, manager.clone()),
+    };
+    let pairings = pairings_of_round(&auth, &round, manager.clone()).await;
 
     let judge = match kind(a, &teams, &judges) {
         Kind::Judge(adjudicator) => adjudicator,

@@ -4,6 +4,7 @@ pub mod clear_rooms;
 pub mod dispatch_req;
 pub mod edit_draw;
 pub mod import;
+pub mod request_manager;
 pub mod save_panels;
 pub mod sensible;
 pub mod view_draw;
@@ -125,7 +126,7 @@ pub struct Import {
     overwrite: bool,
     #[arg(long)]
     #[clap(default_value_t = false)]
-    set_availability: bool
+    set_availability: bool,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -162,7 +163,8 @@ fn load_credentials() -> Auth {
     }
 }
 
-fn main() {
+#[tokio::main]
+async fn main() {
     rustls::crypto::ring::default_provider()
         .install_default()
         .expect("Failed to install rustls crypto provider");
@@ -230,7 +232,7 @@ fn main() {
         }
         Command::Import(import) => {
             let auth = load_credentials();
-            do_import(auth, import);
+            do_import(auth, import).await;
         }
         Command::MakeSensibleConflicts => {
             let auth = load_credentials();
@@ -246,21 +248,21 @@ fn main() {
         }
         Command::SaveAllocs { to, round } => {
             let auth = load_credentials();
-            save_panels(&round, &to, auth);
+            save_panels(&round, &to, auth).await;
         }
         Command::RestoreAllocs { to, round } => {
             let auth = load_credentials();
-            restore_panels(&round, &to, auth);
+            restore_panels(&round, &to, auth).await;
         }
         Command::ViewDraw { round } => {
             let auth = load_credentials();
 
-            view_draw(&round, auth);
+            view_draw(&round, auth).await;
         }
         Command::DrawSwap { round, a, b } => {
             let auth = load_credentials();
 
-            edit_draw::swap(&round, &a, &b, auth);
+            edit_draw::swap(&round, &a, &b, auth).await;
         }
         Command::AddJudge {
             round,
@@ -270,16 +272,16 @@ fn main() {
         } => {
             let auth = load_credentials();
 
-            edit_draw::alloc(&round, &room_id, &judge, &role, auth);
+            edit_draw::alloc(&round, &room_id, &judge, &role, auth).await;
         }
         Command::RemoveJudge { round, judge } => {
             let auth = load_credentials();
 
-            edit_draw::remove(&round, &judge, auth);
+            edit_draw::remove(&round, &judge, auth).await;
         }
         Command::Clash { a, b } => {
             let auth = load_credentials();
-            import::add_clash_cmd(&a, &b, &auth)
+            import::add_clash_cmd(&a, &b, &auth).await
         }
     }
 }

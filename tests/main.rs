@@ -157,45 +157,111 @@ fn test_tabbycat_setup() {
         .status()
         .expect("Failed to install package");
 
-    Command::new("tabbycat")
-        .args([
-            "import",
-            "--judges-csv",
-            "data/judges.csv",
-            "--teams-csv",
-            "data/teams.csv",
-            "--institutions-csv",
-            "data/institutions.csv",
-            "--clashes-csv",
-            "data/clashes.csv",
-        ])
-        .status()
-        .expect("Failed to import data");
+    let _do_initial_import = {
+        Command::new("tabbycat")
+            .args([
+                "import",
+                "--judges-csv",
+                "data/judges.csv",
+                "--teams-csv",
+                "data/teams.csv",
+                "--institutions-csv",
+                "data/institutions.csv",
+                "--clashes-csv",
+                "data/clashes.csv",
+            ])
+            .status()
+            .expect("Failed to import data");
 
-    let teams: Vec<tabbycat_api::types::Team> =
-        attohttpc::get("http://localhost:8000/api/v1/tournaments/bp88team/teams")
+        let teams: Vec<tabbycat_api::types::Team> =
+            attohttpc::get("http://localhost:8000/api/v1/tournaments/bp88team/teams")
+                .header("Authorization", format!("Token {api_key}"))
+                .send()
+                .unwrap()
+                .json()
+                .unwrap();
+        assert_eq!(teams.len(), 88);
+
+        let speakers: Vec<tabbycat_api::types::Speaker> =
+            attohttpc::get("http://localhost:8000/api/v1/tournaments/bp88team/speakers")
+                .header("Authorization", format!("Token {api_key}"))
+                .send()
+                .unwrap()
+                .json()
+                .unwrap();
+        assert_eq!(speakers.len(), 88 * 2);
+
+        let judges: Vec<tabbycat_api::types::Adjudicator> =
+            attohttpc::get("http://localhost:8000/api/v1/tournaments/bp88team/adjudicators")
+                .header("Authorization", format!("Token {api_key}"))
+                .send()
+                .unwrap()
+                .json()
+                .unwrap();
+        assert_eq!(judges.len(), 80);
+    };
+
+    let _overwrite = {
+        attohttpc::post("http://localhost:8000/api/v1/tournaments/bp88team/teams")
+            .json(&json!({
+                "short_reference": "ET",
+                "reference": "Extra team"
+            }))
+            .unwrap()
             .header("Authorization", format!("Token {api_key}"))
             .send()
-            .unwrap()
-            .json()
             .unwrap();
-    assert_eq!(teams.len(), 88);
 
-    let speakers: Vec<tabbycat_api::types::Speaker> =
-        attohttpc::get("http://localhost:8000/api/v1/tournaments/bp88team/speakers")
-            .header("Authorization", format!("Token {api_key}"))
-            .send()
-            .unwrap()
-            .json()
-            .unwrap();
-    assert_eq!(speakers.len(), 88 * 2);
+        let teams: Vec<tabbycat_api::types::Team> =
+            attohttpc::get("http://localhost:8000/api/v1/tournaments/bp88team/teams")
+                .header("Authorization", format!("Token {api_key}"))
+                .send()
+                .unwrap()
+                .json()
+                .unwrap();
+        assert_eq!(teams.len(), 89);
 
-    let judges: Vec<tabbycat_api::types::Adjudicator> =
-        attohttpc::get("http://localhost:8000/api/v1/tournaments/bp88team/adjudicators")
-            .header("Authorization", format!("Token {api_key}"))
-            .send()
-            .unwrap()
-            .json()
-            .unwrap();
-    assert_eq!(judges.len(), 80);
+        Command::new("tabbycat")
+            .args([
+                "import",
+                "--judges-csv",
+                "data/judges.csv",
+                "--teams-csv",
+                "data/teams.csv",
+                "--institutions-csv",
+                "data/institutions.csv",
+                "--clashes-csv",
+                "data/clashes.csv",
+                "--overwrite",
+            ])
+            .status()
+            .expect("Failed to import data");
+
+        let teams: Vec<tabbycat_api::types::Team> =
+            attohttpc::get("http://localhost:8000/api/v1/tournaments/bp88team/teams")
+                .header("Authorization", format!("Token {api_key}"))
+                .send()
+                .unwrap()
+                .json()
+                .unwrap();
+        assert_eq!(teams.len(), 88);
+
+        let speakers: Vec<tabbycat_api::types::Speaker> =
+            attohttpc::get("http://localhost:8000/api/v1/tournaments/bp88team/speakers")
+                .header("Authorization", format!("Token {api_key}"))
+                .send()
+                .unwrap()
+                .json()
+                .unwrap();
+        assert_eq!(speakers.len(), 88 * 2);
+
+        let judges: Vec<tabbycat_api::types::Adjudicator> =
+            attohttpc::get("http://localhost:8000/api/v1/tournaments/bp88team/adjudicators")
+                .header("Authorization", format!("Token {api_key}"))
+                .send()
+                .unwrap()
+                .json()
+                .unwrap();
+        assert_eq!(judges.len(), 80);
+    };
 }

@@ -65,10 +65,12 @@ impl RequestManager {
                 tokio::time::sleep(Duration::from_secs_f32(wait)).await;
             } else {
                 tracing::error!(
-                    "{} \n {} \n {}",
+                    "{} \n {} \n {} \n {:?}",
                     req.url(),
                     res.status(),
-                    res.text().await.unwrap()
+                    res.text().await.unwrap(),
+                    req.body()
+                        .map(|body| String::from_utf8_lossy(body.as_bytes().unwrap()))
                 );
                 // todo: log specific problems with the request
                 panic!("Encountered unexpected request failure.")

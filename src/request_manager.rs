@@ -47,8 +47,18 @@ impl RequestManager {
             let res = self.client.execute(req.try_clone().unwrap()).await.unwrap();
 
             if res.status().is_success() {
-                self.backoff_secs
-                    .store(0, std::sync::atomic::Ordering::SeqCst);
+                let current_backoff = self.backoff_secs.load(std::sync::atomic::Ordering::SeqCst);
+                let new = if current_backoff <= 2 {
+                    0
+                } else {
+                    current_backoff / 2
+                };
+                let _ = self.backoff_secs.compare_exchange(
+                    current_backoff,
+                    new,
+                    std::sync::atomic::Ordering::SeqCst,
+                    std::sync::atomic::Ordering::SeqCst,
+                );
 
                 return res;
             }

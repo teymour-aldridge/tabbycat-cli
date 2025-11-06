@@ -22,6 +22,7 @@ use crate::{
     break_eligibility::do_compute_break_eligibility,
     clear_rooms::do_clear_room_urls,
     import::do_import,
+    request_manager::RequestManager,
     save_panels::{restore_panels, save_panels},
     sensible::do_make_sensible_conflicts,
     view_draw::view_draw,
@@ -284,7 +285,7 @@ async fn main() {
         }
         Command::Clash { a, b } => {
             let auth = load_credentials();
-            import::add_clash_cmd(&a, &b, &auth).await
+            import::add_clash_cmd(&a, &b, &auth, RequestManager::new(&auth.api_key)).await
         }
     }
 }

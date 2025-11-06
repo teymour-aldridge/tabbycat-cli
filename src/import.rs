@@ -12,7 +12,7 @@ use serde::{
 };
 use serde_json::json;
 use tabbycat_api::types::{BreakCategory, SpeakerCategory, Team};
-use tracing::{Level, debug, error, info, span};
+use tracing::{Instrument, Level, Span, debug, error, info, span};
 
 use crate::{
     Auth, Import,
@@ -490,6 +490,9 @@ pub async fn do_import(auth: Auth, import: Import) {
         tracing::info!("starting rooms import");
 
         for room2import in rooms_csv.records() {
+            let single_room_span = span!(Level::INFO, "importing single room");
+            let _single_room_guard = single_room_span.enter();
+
             tracing::info!("adding room");
 
             let room2import = room2import.unwrap();
@@ -511,9 +514,15 @@ pub async fn do_import(auth: Auth, import: Import) {
                         .build()
                         .unwrap()
                 })
+                .instrument(single_room_span.clone())
                 .await;
 
-            let room: tabbycat_api::types::Venue = res.json().await.unwrap();
+            let room: tabbycat_api::types::Venue = res
+                .json()
+                .instrument(single_room_span.clone())
+                .await
+                .unwrap();
+
             for cat in room2import.categories {
                 categories
                     .entry(cat)
@@ -545,6 +554,7 @@ pub async fn do_import(auth: Auth, import: Import) {
                         .build()
                         .unwrap()
                 })
+                .instrument(rooms_span.clone())
                 .await;
 
             if !res.status().is_success() {
@@ -561,7 +571,7 @@ pub async fn do_import(auth: Auth, import: Import) {
         }
     };
 
-    let mut judges = if let Some(mut judges_csv) = judges_csv {
+    let judges = if let Some(mut judges_csv) = judges_csv {
         let headers = Arc::new(judges_csv.headers().unwrap().clone());
         let judges_span = span!(Level::INFO, "importing judges");
         let _judges_guard = judges_span.enter();
@@ -734,7 +744,7 @@ pub async fn do_import(auth: Auth, import: Import) {
                         judge2import.name
                     );
                 }
-            });
+            }.instrument(judges_span.clone()));
         }
 
         while let Some(result) = join_set.join_next().await {
@@ -751,7 +761,7 @@ pub async fn do_import(auth: Auth, import: Import) {
         judges
     };
 
-    let (mut teams, _, _, _) = if let Some(mut teams_csv) = teams_csv {
+    let (teams, _, _, _) = if let Some(mut teams_csv) = teams_csv {
         let headers = Arc::new(teams_csv.headers().unwrap().clone());
         let teams_span = span!(Level::INFO, "importing teams");
         let _teams_guard = teams_span.enter();
@@ -1080,7 +1090,12 @@ pub async fn do_import(auth: Auth, import: Import) {
                         // TODO: we can format the JSON error messages in a more
                         // human-friendly way
                         if !resp.status().is_success() {
-                            panic!("error {:?} {}", resp.status(), resp.text().await.unwrap());
+                            panic!(
+                                "Error occurred while creating speaker: \nStatus: {:?}\nResponse: {}\nSpeaker Name: {}",
+                                resp.status(),
+                                resp.text().await.unwrap(),
+                                speaker2import.name
+                            );
                         }
 
                         let speaker: tabbycat_api::types::Speaker = resp.json().await.unwrap();
@@ -1109,7 +1124,7 @@ pub async fn do_import(auth: Auth, import: Import) {
                         );
                     }
                 }
-            });
+            }.instrument(teams_span.clone()));
         }
 
         while let Some(result) = join_set.join_next().await {
@@ -1130,6 +1145,12 @@ pub async fn do_import(auth: Auth, import: Import) {
     };
 
     if let Some(mut clashes_csv) = clashes_csv {
+        let institutions = Arc::new(institutions);
+        let teams1 = Arc::new(tokio::sync::Mutex::new(teams));
+        let judges1 = Arc::new(tokio::sync::Mutex::new(judges));
+
+        let mut join_set = JoinSet::new();
+
         for clash2import in clashes_csv.records() {
             let clash2import = clash2import.unwrap();
             let clash2import: Clash = clash2import.deserialize(None).unwrap();
@@ -1142,52 +1163,71 @@ pub async fn do_import(auth: Auth, import: Import) {
             );
             let _adding_clash_guard = adding_clash_span.enter();
 
-            add_clash(&auth, &institutions, &mut teams, &mut judges, clash2import);
+            join_set.spawn(add_clash(
+                institutions.clone(),
+                teams1.clone(),
+                judges1.clone(),
+                clash2import,
+                request_manager.clone(),
+            ));
+        }
+
+        while let Some(result) = join_set.join_next().await {
+            if let Err(err) = result {
+                error!("Error occurred while importing a clash: {:?}", err);
+                panic!("Failed to import clash");
+            }
         }
     }
 }
 
-pub async fn add_clash_cmd(a: &str, b: &str, auth: &Auth) {
+/// This is the entrypoint for the command `tabbycat clash a b`. It calls
+/// [`add_clash`] internally.
+pub async fn add_clash_cmd(a: &str, b: &str, auth: &Auth, manager: RequestManager) {
     let request_manager = RequestManager::new(&auth.api_key);
 
-    let (mut teams, mut judges, mut institutions) = tokio::join!(
+    let (teams, judges, institutions) = tokio::join!(
         get_teams(&auth, request_manager.clone()),
         get_judges(&auth, request_manager.clone()),
         get_institutions(&auth, request_manager.clone())
     );
 
     add_clash(
-        auth,
-        &mut institutions,
-        &mut teams,
-        &mut judges,
+        Arc::new(institutions),
+        Arc::new(tokio::sync::Mutex::new(teams)),
+        Arc::new(tokio::sync::Mutex::new(judges)),
         Clash {
             object_1: a.into(),
             object_2: b.into(),
         },
-    );
+        manager,
+    )
+    .await;
 }
 
-fn add_clash(
-    auth: &Auth,
-    institutions: &Vec<tabbycat_api::types::PerTournamentInstitution>,
-    teams: &mut Vec<Team>,
-    judges: &mut Vec<tabbycat_api::types::Adjudicator>,
+#[tracing::instrument(skip(institutions, teams, judges, manager))]
+async fn add_clash(
+    institutions: Arc<Vec<tabbycat_api::types::PerTournamentInstitution>>,
+    teams: Arc<tokio::sync::Mutex<Vec<Team>>>,
+    judges: Arc<tokio::sync::Mutex<Vec<tabbycat_api::types::Adjudicator>>>,
     clash2import: Clash,
+    manager: RequestManager,
 ) {
+    tracing::info!("Adding clash");
+
     pub enum ClashKind {
         Adj(tabbycat_api::types::Adjudicator),
         Team(tabbycat_api::types::Team),
         Inst(tabbycat_api::types::PerTournamentInstitution),
     }
 
-    fn find_obj(
+    async fn find_obj(
         key: &str,
-        teams: &[Team],
-        judges: &[tabbycat_api::types::Adjudicator],
-        institutions: &[tabbycat_api::types::PerTournamentInstitution],
+        teams: Arc<tokio::sync::Mutex<Vec<Team>>>,
+        judges: Arc<tokio::sync::Mutex<Vec<tabbycat_api::types::Adjudicator>>>,
+        institutions: Arc<Vec<tabbycat_api::types::PerTournamentInstitution>>,
     ) -> Option<ClashKind> {
-        for inst in institutions {
+        for inst in institutions.iter() {
             if inst.name.as_str().eq_ignore_ascii_case(key)
                 || inst.code.as_str().eq_ignore_ascii_case(key)
             {
@@ -1195,7 +1235,8 @@ fn add_clash(
             }
         }
 
-        for judge in judges {
+        let judges_lock = judges.lock().await;
+        for judge in judges_lock.iter() {
             if judge.name.eq_ignore_ascii_case(key) {
                 debug!("Resolved {key} as judge {} due to name match.", judge.name);
 
@@ -1203,7 +1244,8 @@ fn add_clash(
             }
         }
 
-        for team in teams {
+        let teams_lock = teams.lock().await;
+        for team in teams_lock.iter() {
             if team.long_name.eq_ignore_ascii_case(key) || team.short_name.eq_ignore_ascii_case(key)
             {
                 debug!(
@@ -1240,46 +1282,65 @@ fn add_clash(
         );
     }
 
-    let a =
-        find_obj(&clash2import.object_1, &*teams, &*judges, institutions).unwrap_or_else(|| {
-            panic!(
-                "error: no judge, team name, or speaker found matching {}",
-                clash2import.object_1
-            )
-        });
-    let b =
-        find_obj(&clash2import.object_2, &*teams, &*judges, institutions).unwrap_or_else(|| {
-            panic!(
-                "error: no judge, team name, or speaker found matching {}",
-                clash2import.object_2
-            )
-        });
+    let a = find_obj(
+        &clash2import.object_1,
+        teams.clone(),
+        judges.clone(),
+        institutions.clone(),
+    )
+    .await
+    .unwrap_or_else(|| {
+        panic!(
+            "error: no judge, team name, or speaker found matching {}",
+            clash2import.object_1
+        )
+    });
+    let b = find_obj(
+        &clash2import.object_2,
+        teams.clone(),
+        judges.clone(),
+        institutions.clone(),
+    )
+    .await
+    .unwrap_or_else(|| {
+        panic!(
+            "error: no judge, team name, or speaker found matching {}",
+            clash2import.object_2
+        )
+    });
 
     match (a, b) {
         (ClashKind::Adj(a), ClashKind::Inst(inst)) | (ClashKind::Inst(inst), ClashKind::Adj(a)) => {
             if !a.institution_conflicts.contains(&inst.url) {
                 let mut t = a.institution_conflicts;
                 t.push(inst.url);
-                let resp = attohttpc::patch(a.url)
-                    .header("Authorization", format!("Token {}", auth.api_key))
-                    .json(&serde_json::json!({
-                        "institution_conflicts": t
-                    }))
-                    .unwrap()
-                    .send()
-                    .unwrap();
+                let resp = manager
+                    .send_request(|| {
+                        manager
+                            .client
+                            .patch(a.url.clone())
+                            .json(&serde_json::json!({
+                                "institution_conflicts": t
+                            }))
+                            .build()
+                            .unwrap()
+                    })
+                    .instrument(Span::current())
+                    .await;
 
-                if !resp.is_success() {
+                if !resp.status().is_success() {
                     error!(
                         "Failed to patch adjudicator: {} {}",
                         resp.status(),
-                        resp.text_utf8().unwrap()
+                        resp.text().await.unwrap()
                     );
                     panic!("Failed to patch adjudicator institution conflicts");
                 }
 
-                let adj: tabbycat_api::types::Adjudicator = resp.json().unwrap();
-                let judge = judges
+                let adj: tabbycat_api::types::Adjudicator =
+                    resp.json().instrument(Span::current()).await.unwrap();
+                let mut judges_lock = judges.lock().await;
+                let judge = judges_lock
                     .iter_mut()
                     .find(|judge| judge.url == adj.url)
                     .unwrap();
@@ -1300,17 +1361,24 @@ fn add_clash(
             if !t.institution_conflicts.contains(&inst.url) {
                 let mut conflicts = t.institution_conflicts;
                 conflicts.push(inst.url);
-                let patched_team: tabbycat_api::types::Team = attohttpc::patch(t.url)
-                    .header("Authorization", format!("Token {}", auth.api_key))
-                    .json(&serde_json::json!({
-                        "institution_conflicts": conflicts
-                    }))
-                    .unwrap()
-                    .send()
-                    .unwrap()
+                let patched_team: tabbycat_api::types::Team = manager
+                    .send_request(|| {
+                        manager
+                            .client
+                            .patch(t.url.clone())
+                            .json(&serde_json::json!({
+                                "institution_conflicts": conflicts
+                            }))
+                            .build()
+                            .unwrap()
+                    })
+                    .instrument(Span::current())
+                    .await
                     .json()
+                    .await
                     .unwrap();
-                let original_team = teams
+                let mut teams_lock = teams.lock().await;
+                let original_team = teams_lock
                     .iter_mut()
                     .find(|team| team.url == patched_team.url)
                     .unwrap();
@@ -1330,17 +1398,24 @@ fn add_clash(
             if !a.adjudicator_conflicts.contains(&b.url) {
                 let mut t = a.adjudicator_conflicts;
                 t.push(b.url);
-                let adj: tabbycat_api::types::Adjudicator = attohttpc::patch(a.url)
-                    .header("Authorization", format!("Token {}", auth.api_key))
-                    .json(&serde_json::json!({
-                        "adjudicator_conflicts": t
-                    }))
-                    .unwrap()
-                    .send()
-                    .unwrap()
+                let adj: tabbycat_api::types::Adjudicator = manager
+                    .send_request(|| {
+                        manager
+                            .client
+                            .patch(a.url.clone())
+                            .json(&serde_json::json!({
+                                "adjudicator_conflicts": t
+                            }))
+                            .build()
+                            .unwrap()
+                    })
+                    .instrument(Span::current())
+                    .await
                     .json()
+                    .await
                     .unwrap();
-                let judge = judges
+                let mut judges_lock = judges.lock().await;
+                let judge = judges_lock
                     .iter_mut()
                     .find(|judge| judge.url == adj.url)
                     .unwrap();
@@ -1357,17 +1432,24 @@ fn add_clash(
             if !adj.team_conflicts.contains(&team.url) {
                 let mut t = adj.team_conflicts;
                 t.push(team.url);
-                let adj: tabbycat_api::types::Adjudicator = attohttpc::patch(adj.url)
-                    .header("Authorization", format!("Token {}", auth.api_key))
-                    .json(&serde_json::json!({
-                        "team_conflicts": t
-                    }))
-                    .unwrap()
-                    .send()
-                    .unwrap()
+                let adj: tabbycat_api::types::Adjudicator = manager
+                    .send_request(|| {
+                        manager
+                            .client
+                            .patch(adj.url.clone())
+                            .json(&serde_json::json!({
+                                "team_conflicts": t
+                            }))
+                            .build()
+                            .unwrap()
+                    })
+                    .in_current_span()
+                    .await
                     .json()
+                    .await
                     .unwrap();
-                let judge = judges
+                let mut judges_lock = judges.lock().await;
+                let judge = judges_lock
                     .iter_mut()
                     .find(|judge| judge.url == adj.url)
                     .unwrap();

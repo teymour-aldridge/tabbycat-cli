@@ -203,6 +203,7 @@ pub struct JudgeRow {
     pub base_score: Option<f64>,
     #[serde(deserialize_with = "tags_deserialize", default = "Vec::new")]
     pub availability: Vec<String>,
+    pub gender: Option<String>,
 }
 
 pub async fn do_import(auth: Auth, import: Import) {
@@ -644,13 +645,26 @@ pub async fn do_import(auth: Auth, import: Import) {
                         "team_conflicts": [],
                         "adjudicator_conflicts": [],
                         "independent": judge2import.is_ia,
-                        "adj_core": judge2import.is_ca,
+                        "adj_core": judge2import.is_ca
                     });
 
                     if let Some(base_score) = judge2import.base_score {
                         tracing::trace!("base score {base_score}");
                         merge(&mut payload, &json!({"base_score": base_score}));
                     }
+
+                    if let Some(gender) = judge2import.gender {
+                        tracing::trace!("gender {gender}");
+                        let gender = match gender.to_ascii_lowercase().as_str() {
+                            "male" => "M".to_string(),
+                            "female" => "F".to_string(),
+                            "other" => "O".to_string(),
+                            _ => gender,
+                        };
+                        tracing::trace!("rewritten as {gender}");
+                        merge(&mut payload, &json!({"gender": gender}));
+                    }
+
 
                     tracing::trace!("data for request is: {payload:?}");
 
@@ -1056,6 +1070,12 @@ pub async fn do_import(auth: Auth, import: Import) {
                         }
 
                         if let Some(gender) = speaker2import.gender {
+                            let gender = match gender.to_ascii_lowercase().as_str() {
+                                "male" => "M".to_string(),
+                                "female" => "F".to_string(),
+                                "other" => "O".to_string(),
+                                _ => gender,
+                            };
                             merge(
                                 &mut payload,
                                 &json!({

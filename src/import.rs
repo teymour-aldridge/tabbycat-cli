@@ -306,13 +306,23 @@ pub async fn do_import(auth: Auth, import: Import) {
     }
     let mut judges: Vec<tabbycat_api::types::Adjudicator> = resp.json().unwrap();
 
+    let exists_some_draw = rounds.iter().any(
+        |round| matches!(round.draw_status, Some(t) if t != tabbycat_api::types::DrawStatusEnum::N),
+    );
+
     if import.overwrite {
+        // todo: is this check robust?
+        if exists_some_draw {
+            tracing::error!("Not deleting data when the tournament has started!");
+            return;
+        }
+
         // todo: could track all objects which have a matching item in the
         // spreadsheet and then delete those which don't
 
         let _overwriting_span = span!(Level::INFO, "overwriting");
 
-        let _delete_judges = {
+        let _delete_judges = if import.judges_csv.is_some() {
             let mut join_set = JoinSet::new();
 
             for judge in judges.iter() {
@@ -342,7 +352,7 @@ pub async fn do_import(auth: Auth, import: Import) {
             }
         };
 
-        let _delete_teams = {
+        let _delete_teams = if import.teams_csv.is_some() {
             {
                 let mut join_set = JoinSet::new();
 
@@ -371,7 +381,7 @@ pub async fn do_import(auth: Auth, import: Import) {
             }
         };
 
-        let _delete_institutions = {
+        let _delete_institutions = if import.institutions_csv.is_some() {
             let mut join_set = JoinSet::new();
 
             for institution in &institutions {
@@ -417,6 +427,8 @@ pub async fn do_import(auth: Auth, import: Import) {
         institutions.clear();
         speakers.clear();
     }
+
+    // todo: confirm if a draw already exists
 
     let institutions = if let Some(mut institutions_csv) = institutions_csv {
         let headers = Arc::new(institutions_csv.headers().unwrap().clone());

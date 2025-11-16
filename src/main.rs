@@ -7,6 +7,7 @@ pub mod import;
 pub mod request_manager;
 pub mod save_panels;
 pub mod sensible;
+pub mod sqlite;
 pub mod view_draw;
 
 use std::process::exit;
@@ -89,6 +90,9 @@ pub enum Command {
     Clash {
         a: String,
         b: String,
+    },
+    Sqlite {
+        output: String,
     },
 }
 
@@ -286,6 +290,10 @@ async fn main() {
         Command::Clash { a, b } => {
             let auth = load_credentials();
             import::add_clash_cmd(&a, &b, &auth, RequestManager::new(&auth.api_key)).await
+        }
+        Command::Sqlite { output } => {
+            let auth = load_credentials();
+            sqlite::export_feedback_db(auth, &output).await;
         }
     }
 }

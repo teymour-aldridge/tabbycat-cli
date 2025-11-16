@@ -2,6 +2,42 @@ use tabbycat_api::types::RoundPairing;
 
 use crate::{Auth, dispatch_req::json_of_resp, request_manager::RequestManager};
 
+pub async fn get_feedback_questions(
+    Auth {
+        tabbycat_url,
+        tournament_slug,
+        api_key: _,
+    }: &Auth,
+    manager: RequestManager,
+) -> Vec<tabbycat_api::types::FeedbackQuestion> {
+    let api_addr = format!("{tabbycat_url}/api/v1");
+
+    let base_url = format!("{api_addr}/tournaments/{tournament_slug}/feedback-questions");
+    let resp = manager
+        .send_request(|| manager.client.get(&base_url).build().unwrap())
+        .await;
+
+    resp.json().await.unwrap()
+}
+
+pub async fn get_feedbacks(
+    Auth {
+        tabbycat_url,
+        tournament_slug,
+        api_key: _,
+    }: &Auth,
+    manager: RequestManager,
+) -> Vec<tabbycat_api::types::Feedback> {
+    let api_addr = format!("{tabbycat_url}/api/v1");
+
+    let base_url = format!("{api_addr}/tournaments/{tournament_slug}/feedback");
+    let resp = manager
+        .send_request(|| manager.client.get(&base_url).build().unwrap())
+        .await;
+
+    resp.json().await.unwrap()
+}
+
 pub async fn get_rounds(
     Auth {
         tabbycat_url,

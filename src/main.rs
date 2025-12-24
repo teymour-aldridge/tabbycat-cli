@@ -3,11 +3,11 @@ pub mod break_eligibility;
 pub mod clear_rooms;
 pub mod dispatch_req;
 pub mod edit_draw;
+pub mod export;
 pub mod import;
 pub mod request_manager;
 pub mod save_panels;
 pub mod sensible;
-pub mod sqlite;
 pub mod view_draw;
 
 use std::process::exit;
@@ -91,7 +91,13 @@ pub enum Command {
         a: String,
         b: String,
     },
-    Sqlite {
+    /// Exports data from Tabbycat. Currently this is primarily oriented
+    /// towards extracting feedback in a format suitable for subsequent
+    /// analysis.
+    ExportFeedback {
+        /// One of `csv`, `sqlite`
+        format: String,
+        /// Location to write the data to. Warning: overwrites existing files!
         output: String,
     },
 }
@@ -291,9 +297,9 @@ async fn main() {
             let auth = load_credentials();
             import::add_clash_cmd(&a, &b, &auth, RequestManager::new(&auth.api_key)).await
         }
-        Command::Sqlite { output } => {
+        Command::ExportFeedback { output, format } => {
             let auth = load_credentials();
-            sqlite::export_feedback_db(auth, &output).await;
+            export::export(auth, &format, &output).await;
         }
     }
 }

@@ -60,6 +60,9 @@ pub async fn export_feedback_csv(auth: Auth, output: &str) {
         header.push(format!("question_{}", question.reference.to_string()));
     }
 
+    header.push("source_url".to_string());
+    header.push("target_url".to_string());
+
     writer.write_record(&header).unwrap();
 
     for (feedback_idx, feedback) in data.feedbacks.iter().enumerate() {
@@ -110,6 +113,9 @@ pub async fn export_feedback_csv(auth: Auth, output: &str) {
                 record.push(String::new());
             }
         }
+
+        record.push(feedback.source.clone());
+        record.push(feedback.adjudicator.clone());
 
         writer.write_record(&record).unwrap();
     }

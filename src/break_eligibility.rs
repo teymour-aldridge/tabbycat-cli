@@ -66,7 +66,13 @@ pub fn do_compute_break_eligibility(auth: Auth, format: String) {
 
         for speaker in &team.speakers {
             for category in &speaker.categories {
-                let break_cat = map.get(category).unwrap();
+                let break_cat = match map.get(category) {
+                    Some(break_cat) => break_cat,
+                    None => {
+                        tracing::error!("No matching break category found for {}", category);
+                        continue;
+                    }
+                };
 
                 n_breaking_per_category
                     .entry(break_cat.clone())
@@ -84,12 +90,10 @@ pub fn do_compute_break_eligibility(auth: Auth, format: String) {
         // compute break categories without it)
         let esl = break_categories
             .iter()
-            .find(|cat| cat.name.to_ascii_lowercase().contains("esl"))
-            .unwrap();
+            .find(|cat| cat.name.to_ascii_lowercase().contains("esl"));
         let efl = break_categories
             .iter()
-            .find(|cat| cat.name.to_ascii_lowercase().contains("efl"))
-            .unwrap();
+            .find(|cat| cat.name.to_ascii_lowercase().contains("efl"));
 
         for (team_url, breaking_counts) in team_breaking_counts {
             let team = teams.iter().find(|t| t.url == team_url).unwrap();
@@ -102,16 +106,21 @@ pub fn do_compute_break_eligibility(auth: Auth, format: String) {
                 }
             }
 
-            let breaks_esl = {
-                breaking_counts.get(&esl.url).unwrap_or(&0)
-                    + breaking_counts.get(&efl.url).unwrap_or(&0)
-                    >= team.speakers.len().saturating_sub(1)
-            };
+            if let Some(esl) = esl {
+                let breaks_esl = {
+                    breaking_counts.get(&esl.url).unwrap_or(&0)
+                        + match efl {
+                            Some(efl) => *breaking_counts.get(&efl.url).unwrap_or(&0),
+                            None => 0,
+                        }
+                        >= team.speakers.len().saturating_sub(1)
+                };
 
-            if breaks_esl {
-                break_cats.insert(esl.url.clone());
-            } else {
-                break_cats.remove(&esl.url.clone());
+                if breaks_esl {
+                    break_cats.insert(esl.url.clone());
+                } else {
+                    break_cats.remove(&esl.url.clone());
+                }
             }
 
             break_cats.insert(open.url.clone());
